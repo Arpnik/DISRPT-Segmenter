@@ -1,7 +1,8 @@
 from pathlib import Path
 
 import requests
-
+import warnings
+warnings.filterwarnings("ignore")
 
 class GUMDatasetDownloader:
     """Download eng.erst.gum dataset from DISRPT 2025"""

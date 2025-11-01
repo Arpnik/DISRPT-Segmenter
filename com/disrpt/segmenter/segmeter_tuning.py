@@ -1,5 +1,4 @@
 import argparse
-
 import torch
 import numpy as np
 from pathlib import Path
@@ -14,26 +13,18 @@ from transformers import (
 from peft import LoraConfig, get_peft_model, TaskType
 from sklearn.metrics import precision_recall_fscore_support, accuracy_score, classification_report
 import wandb
-
 from com.disrpt.segmenter.dataset_prep import download_gum_dataset, load_gum_datasets
 import warnings
 warnings.filterwarnings("ignore")
 
+
 class BERTFineTuning:
     """
-    Enhanced BERT fine-tuning with configurable checkpointing, 
+    Enhanced BERT fine-tuning with configurable checkpointing,
     early stopping, and comprehensive evaluation.
     """
 
     def __init__(self, model_name, num_labels=2, device='cuda'):
-        """
-        Initialize BERT model with LoRA for EDU segmentation.
-
-        Args:
-            model_name: HuggingFace model identifier (e.g., 'distilbert-base-uncased')
-            num_labels: Number of classes (2 for binary EDU segmentation)
-            device: 'cuda' or 'cpu'
-        """
         self.device = device
         self.model_name = model_name
         self.num_labels = num_labels
@@ -42,14 +33,12 @@ class BERTFineTuning:
         print(f"Initializing {model_name} with LoRA")
         print("=" * 70)
 
-        # Load base model
         model = AutoModelForTokenClassification.from_pretrained(
             model_name,
             num_labels=num_labels,
             ignore_mismatched_sizes=True
         )
 
-        # Configure LoRA
         lora_config = LoraConfig(
             task_type=TaskType.TOKEN_CLS,
             r=16,
@@ -60,26 +49,15 @@ class BERTFineTuning:
             bias="none"
         )
 
-        # Apply LoRA
         self.model = get_peft_model(model, lora_config)
         print("\n📊 Trainable Parameters:")
         self.model.print_trainable_parameters()
 
     @staticmethod
     def compute_metrics(pred):
-        """
-        Compute precision, recall, F1, and accuracy for EDU segmentation.
-
-        Args:
-            pred: Tuple of (predictions, labels) from Trainer
-
-        Returns:
-            Dictionary with accuracy, precision, recall, f1
-        """
         predictions, labels = pred
         predictions = np.argmax(predictions, axis=2)
 
-        # Flatten and filter out ignored tokens (-100)
         true_predictions = []
         true_labels = []
 
@@ -89,7 +67,6 @@ class BERTFineTuning:
                     true_predictions.append(pred_label)
                     true_labels.append(true_label)
 
-        # Calculate metrics
         precision, recall, f1, _ = precision_recall_fscore_support(
             true_labels,
             true_predictions,
@@ -99,44 +76,32 @@ class BERTFineTuning:
         )
         acc = accuracy_score(true_labels, true_predictions)
 
-        return {
+        metrics = {
             'accuracy': acc,
             'precision': precision,
             'recall': recall,
             'f1': f1
         }
 
+        # Log metrics to wandb if active
+        if wandb.run is not None:
+            wandb.log(metrics)
+
+        return metrics
+
     def train_model(
-            self,
-            train_dataset,
-            eval_dataset,
-            output_dir,
-            num_epochs=10,
-            batch_size=16,
-            eval_batch_size=32,
-            learning_rate=3e-4,
-            save_every_n_epochs=2,
-            early_stopping_patience=3,
-            early_stopping_threshold=0.001
+        self,
+        train_dataset,
+        eval_dataset,
+        output_dir,
+        num_epochs=10,
+        batch_size=16,
+        eval_batch_size=32,
+        learning_rate=3e-4,
+        save_every_n_epochs=2,
+        early_stopping_patience=3,
+        early_stopping_threshold=0.001
     ):
-        """
-        Train model with configurable checkpointing and early stopping.
-
-        Args:
-            train_dataset: Training dataset
-            eval_dataset: Validation dataset
-            output_dir: Directory to save model and checkpoints
-            num_epochs: Total training epochs
-            batch_size: Training batch size
-            eval_batch_size: Evaluation batch size
-            learning_rate: Learning rate for optimizer
-            save_every_n_epochs: Save checkpoint every N epochs
-            early_stopping_patience: Epochs to wait before stopping
-            early_stopping_threshold: Minimum improvement threshold
-
-        Returns:
-            Dictionary with final evaluation results
-        """
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
@@ -155,59 +120,42 @@ class BERTFineTuning:
         print(f"Device:                   {self.device}")
         print("=" * 70)
 
-        # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(self.model_name)
 
-        # Training arguments
         training_args = TrainingArguments(
             output_dir=output_dir,
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=eval_batch_size,
             learning_rate=learning_rate,
-            warmup_steps=500,
+            warmup_steps=100,
             weight_decay=0.01,
 
-            # Logging
+            # Logging + evaluation + wandb integration
             logging_dir=f'{output_dir}/logs',
-            logging_steps=50,
+            logging_steps=20,
             logging_strategy="steps",
-
-            # Evaluation
             eval_strategy="epoch",
+            report_to="wandb" if wandb.run is not None else "none",
 
-            # Checkpointing - save every N epochs
+            # Checkpoints
             save_strategy="epoch",
-            save_steps=save_every_n_epochs,
-            save_total_limit=5,  # Keep only last 5 checkpoints
-
-            # Best model selection
+            save_total_limit=5,
             load_best_model_at_end=True,
             metric_for_best_model="f1",
             greater_is_better=True,
 
-            # Performance
             fp16=torch.cuda.is_available(),
-            dataloader_num_workers=4,
-
-            # Disable external logging
-            report_to="wandb" if wandb.run is not None else "none",
-
+            dataloader_num_workers=4
         )
 
-        # Data collator for dynamic padding
-        data_collator = DataCollatorForTokenClassification(
-            tokenizer=tokenizer,
-            padding=True
-        )
+        data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer, padding=True)
 
-        # Early stopping callback
         early_stopping = EarlyStoppingCallback(
             early_stopping_patience=early_stopping_patience,
             early_stopping_threshold=early_stopping_threshold
         )
 
-        # Initialize trainer
         trainer = Trainer(
             model=self.model,
             args=training_args,
@@ -218,81 +166,50 @@ class BERTFineTuning:
             callbacks=[early_stopping]
         )
 
-        # Train
-        print("\n" + "🚀" * 35)
-        print("TRAINING STARTED")
-        print("🚀" * 35 + "\n")
-
+        print("\n🚀 TRAINING STARTED 🚀\n")
         train_result = trainer.train()
+        print("\n✅ TRAINING COMPLETED ✅")
 
-        print("\n" + "✅" * 35)
-        print("TRAINING COMPLETED")
-        print("✅" * 35)
+        # Log training metrics to W&B
+        if wandb.run is not None:
+            wandb.log(train_result.metrics)
 
-        # Print training metrics
-        print("\n" + "=" * 70)
-        print("FINAL TRAINING METRICS")
+        print("\nFINAL TRAINING METRICS")
         print("=" * 70)
         for key, value in train_result.metrics.items():
             print(f"{key:.<50} {value:.4f}")
 
-        # Evaluate on validation set
-        print("\n" + "=" * 70)
-        print("VALIDATION METRICS")
+        print("\nVALIDATION METRICS")
         print("=" * 70)
-
         eval_results = trainer.evaluate()
+        if wandb.run is not None:
+            wandb.log(eval_results)
         for key, value in eval_results.items():
             print(f"{key:.<50} {value:.4f}")
 
-        # Save final model
         final_model_dir = output_path / "best_model"
-        print("\n" + "=" * 70)
-        print(f"Saving best model to: {final_model_dir}")
-        print("=" * 70)
-
+        print(f"\nSaving best model to: {final_model_dir}")
         trainer.save_model(str(final_model_dir))
         tokenizer.save_pretrained(str(final_model_dir))
-
         print("✓ Model saved successfully")
 
         return eval_results
 
     def evaluate_test_set(self, test_dataset, model_path, batch_size=32):
-        """
-        Load trained model and evaluate on test set.
-
-        Args:
-            test_dataset: Test dataset
-            model_path: Path to saved model directory
-            batch_size: Batch size for evaluation
-
-        Returns:
-            Dictionary with test metrics and detailed classification report
-        """
-        print("\n" + "=" * 70)
-        print("LOADING MODEL FOR TEST EVALUATION")
+        print("\nLOADING MODEL FOR TEST EVALUATION")
         print("=" * 70)
         print(f"Model path: {model_path}")
         print(f"Test examples: {len(test_dataset)}")
 
-        # Load tokenizer and model
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         model = AutoModelForTokenClassification.from_pretrained(
-            model_path,
-            num_labels=self.num_labels
-        )
-        model.to(self.device)
+            model_path, num_labels=self.num_labels
+        ).to(self.device)
 
         print("✓ Model loaded successfully")
 
-        # Create data collator
-        data_collator = DataCollatorForTokenClassification(
-            tokenizer=tokenizer,
-            padding=True
-        )
+        data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer, padding=True)
 
-        # Training args for evaluation only
         eval_args = TrainingArguments(
             output_dir="./temp_eval",
             per_device_eval_batch_size=batch_size,
@@ -301,7 +218,6 @@ class BERTFineTuning:
             report_to="wandb" if wandb.run is not None else "none"
         )
 
-        # Create trainer for evaluation
         trainer = Trainer(
             model=model,
             args=eval_args,
@@ -309,48 +225,35 @@ class BERTFineTuning:
             compute_metrics=self.compute_metrics
         )
 
-        # Evaluate on test set
-        print("\n" + "=" * 70)
-        print("TEST SET EVALUATION")
+        print("\nTEST SET EVALUATION")
         print("=" * 70)
-
         test_results = trainer.evaluate(test_dataset)
 
-        # Print metrics
-        print("\n📊 TEST METRICS:")
-        print("-" * 70)
+        if wandb.run is not None:
+            wandb.log({"test_" + k: v for k, v in test_results.items()})
+
         for key, value in test_results.items():
             print(f"{key:.<50} {value:.4f}")
 
-        # Get detailed predictions for classification report
         predictions = trainer.predict(test_dataset)
         pred_labels = np.argmax(predictions.predictions, axis=2)
         true_labels = predictions.label_ids
 
-        # Flatten and filter
-        flat_preds = []
-        flat_labels = []
+        flat_preds, flat_labels = [], []
         for preds, labels in zip(pred_labels, true_labels):
             for pred, label in zip(preds, labels):
                 if label != -100:
                     flat_preds.append(pred)
                     flat_labels.append(label)
 
-        # Print classification report
-        print("\n" + "=" * 70)
-        print("DETAILED CLASSIFICATION REPORT")
+        print("\nDETAILED CLASSIFICATION REPORT")
         print("=" * 70)
-        print("\nClass Labels:")
-        print("  0 = EDU Continue (token within current EDU)")
-        print("  1 = EDU Start (token begins new EDU)\n")
-
-        report = classification_report(
+        print(classification_report(
             flat_labels,
             flat_preds,
             target_names=['EDU Continue (0)', 'EDU Start (1)'],
             digits=4
-        )
-        print(report)
+        ))
 
         return test_results
 
@@ -358,7 +261,6 @@ class BERTFineTuning:
 # ============================================================================
 # MAIN TRAINING PIPELINE
 # ============================================================================
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Fine-tune BERT for EDU segmentation with LoRA + W&B")
     parser.add_argument("--model_name", type=str, default="distilbert-base-uncased")
@@ -368,35 +270,29 @@ def parse_args():
     parser.add_argument("--learning_rate", type=float, default=3e-4)
     parser.add_argument("--save_every_n_epochs", type=int, default=2)
     parser.add_argument("--early_stopping_patience", type=int, default=3)
-    parser.add_argument("--use_wandb", type=bool, default=False)
+    parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--wandb_project", type=str, default="edu-segmentation")
     parser.add_argument("--wandb_run_name", type=str, default="")
-
     return parser.parse_args()
 
 
 def main():
-    """Complete training pipeline with train/dev/test evaluation"""
-
-    print("\n" + "=" * 35)
-    print("EDU SEGMENTATION MODEL TRAINING")
+    print("\nEDU SEGMENTATION MODEL TRAINING")
     print("=" * 35)
-
-    # Configuration
     args = parse_args()
+
     MODEL_NAME = args.model_name
     OUTPUT_DIR = args.output_dir
     NUM_EPOCHS = args.epochs
     BATCH_SIZE = args.batch_size
-    SAVE_EVERY_N_EPOCHS = args.save_every_n_epochs2
+    SAVE_EVERY_N_EPOCHS = args.save_every_n_epochs
     EARLY_STOPPING_PATIENCE = args.early_stopping_patience
     LEARNING_RATE = args.learning_rate
 
-    # Initialize W&B
     if args.use_wandb:
         wandb.init(
-            project= args.wandb_project,
-            name= args.wandb_run_name if args.wandb_run_name!="" else f"{MODEL_NAME.replace('/', '-')}_lr{LEARNING_RATE}_ep{NUM_EPOCHS}",
+            project=args.wandb_project,
+            name=args.wandb_run_name or f"{MODEL_NAME.replace('/', '-')}_lr{LEARNING_RATE}_ep{NUM_EPOCHS}",
             config={
                 "model_name": MODEL_NAME,
                 "epochs": NUM_EPOCHS,
@@ -405,40 +301,22 @@ def main():
                 "early_stopping_patience": EARLY_STOPPING_PATIENCE,
             }
         )
-    # Step 1: Download dataset
-    print("\n" + "=" * 70)
-    print("STEP 1: Download Dataset")
-    print("=" * 70)
-    download_success = download_gum_dataset()
 
+    print("\nSTEP 1: Download Dataset")
+    download_success = download_gum_dataset()
     if not download_success:
         print("\n❌ Dataset download failed!")
         return
 
-    # Step 2: Load tokenizer and datasets
-    print("\n" + "=" * 70)
-    print("STEP 2: Load Datasets")
-    print("=" * 70)
+    print("\nSTEP 2: Load Datasets")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     train_dataset, dev_dataset, test_dataset = load_gum_datasets(tokenizer)
 
-    # Step 3: Initialize model
-    print("\n" + "=" * 70)
-    print("STEP 3: Initialize Model")
-    print("=" * 70)
-
+    print("\nSTEP 3: Initialize Model")
     device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
-    bert_model = BERTFineTuning(
-        model_name=MODEL_NAME,
-        num_labels=2,
-        device=device
-    )
+    bert_model = BERTFineTuning(MODEL_NAME, num_labels=2, device=device)
 
-    # Step 4: Train model
-    print("\n" + "=" * 70)
-    print("STEP 4: Train Model")
-    print("=" * 70)
-
+    print("\nSTEP 4: Train Model")
     eval_results = bert_model.train_model(
         train_dataset=train_dataset,
         eval_dataset=dev_dataset,
@@ -450,39 +328,12 @@ def main():
         learning_rate=LEARNING_RATE
     )
 
-    # Step 5: Evaluate on test set
-    print("\n" + "=" * 70)
-    print("STEP 5: Final Test Set Evaluation")
-    print("=" * 70)
-
+    print("\nSTEP 5: Evaluate on Test Set")
     best_model_path = Path(OUTPUT_DIR) / "best_model"
-    test_results = bert_model.evaluate_test_set(
-        test_dataset=test_dataset,
-        model_path=str(best_model_path)
-    )
-
-    # Final summary
-    print("\n" + "🎉" * 35)
-    print("TRAINING PIPELINE COMPLETE!")
-    print("🎉" * 35)
-
-    print("\n📊 FINAL RESULTS SUMMARY:")
-    print("=" * 70)
-    print(f"{'Metric':<30} {'Validation':<20} {'Test':<20}")
-    print("-" * 70)
-
-    metrics = ['eval_accuracy', 'eval_precision', 'eval_recall', 'eval_f1']
-    for metric in metrics:
-        metric_name = metric.replace('eval_', '').capitalize()
-        val_score = eval_results.get(metric, 0)
-        test_score = test_results.get(metric, 0)
-        print(f"{metric_name:<30} {val_score:<20.4f} {test_score:<20.4f}")
-
-    print("=" * 70)
-    print(f"\n✅ Best model saved at: {best_model_path}")
-    print(f"✅ Training logs saved at: {OUTPUT_DIR}/logs")
+    test_results = bert_model.evaluate_test_set(test_dataset=test_dataset, model_path=str(best_model_path))
 
     if args.use_wandb:
+        wandb.log({"final_eval_metrics": eval_results, "final_test_metrics": test_results})
         wandb.finish()
 
 

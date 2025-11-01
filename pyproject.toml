@@ -1,0 +1,26 @@
+[project]
+name = "disrpt-segmenter"
+version = "0.1.0"
+description = "Fine-tuning BERT for EDU segmentation using DISRPT data"
+authors = [{ name = "Arpnik Singh" }]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "torch==2.9.0",
+    "transformers==4.57.1",
+    "datasets==4.3.0",
+    "scikit-learn==1.7.2",
+    "wandb==0.22.3",
+    "numpy==2.2.6",
+    "peft==0.17.1",
+]
+
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+include = ["com*"]
+
+[tool.uv]
+package = true
