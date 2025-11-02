@@ -15,7 +15,7 @@ from transformers import (
 from peft import LoraConfig, get_peft_model, TaskType
 from sklearn.metrics import precision_recall_fscore_support, accuracy_score, classification_report
 import wandb
-from com.disrpt.segmenter.dataset_prep import download_gum_dataset, load_gum_datasets, download_dataset, load_datasets
+from com.disrpt.segmenter.dataset_prep import download_dataset, load_datasets
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -576,9 +576,9 @@ def parse_args():
 def main():
     """Complete training pipeline with W&B logging"""
 
-    print("\n" + "🎯" * 35)
+    print("\n" + "=" * 35)
     print("EDU SEGMENTATION: BERT + LoRA + MLP")
-    print("🎯" * 35)
+    print("=" * 35)
 
     args = parse_args()
 
@@ -628,7 +628,7 @@ def main():
     print("STEP 2: Load Datasets")
     print("=" * 70)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    train_dataset, dev_dataset, test_dataset = load_datasets(tokenizer)
+    train_dataset, dev_dataset, test_dataset, _ = load_datasets(tokenizer)
 
     # Log dataset info to W&B
     if args.use_wandb:
@@ -684,9 +684,9 @@ def main():
     )
 
     # Final summary
-    print("\n" + "🎉" * 35)
+    print("\n" + "=*=" * 35)
     print("TRAINING PIPELINE COMPLETE!")
-    print("🎉" * 35)
+    print("=*=" * 35)
 
     print("\n📊 FINAL RESULTS SUMMARY:")
     print("=" * 70)

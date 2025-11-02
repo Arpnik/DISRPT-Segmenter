@@ -97,12 +97,12 @@ There are 2 segmenters defined which use a transformer model (DistilBERT or BERT
 
 **Basic usage:**
 ```bash
-python segmenter_tuning.py
+python -m com.disrpt.segmenter.segmenter_tuning
 ```
 
 **With custom parameters:**
 ```bash
-python segmenter_tuning.py \
+python -m com.disrpt.segmenter.segmenter_tuning \
   --model_name distilbert-base-uncased \
   --output_dir ./output/edu_segmenter \
   --epochs 10 \
@@ -139,12 +139,12 @@ python segmenter_tuning.py \
 
 **Basic usage:**
 ```bash
-python fine_tuning.py
-```
+ python -m com.disrpt.segmenter.fine_tunning
+ ```
 
 **With custom parameters:**
 ```bash
-python fine_tuning.py \
+python -m com.disrpt.segmenter.fine_tunning \
   --model_name distilbert-base-uncased \
   --output_dir ./output-2/edu_segmenter \
   --epochs 10 \
