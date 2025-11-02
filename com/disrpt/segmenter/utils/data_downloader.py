@@ -1,16 +1,16 @@
 from pathlib import Path
 
-import requests
+import requests, os
 import warnings
 warnings.filterwarnings("ignore")
 
-class GUMDatasetDownloader:
+class DatasetDownloader:
     """Download eng.erst.gum dataset from DISRPT 2025"""
 
     def __init__(self, dataset_dir="dataset"):
         self.dataset_dir = Path(dataset_dir)
         self.base_url = "https://raw.githubusercontent.com/disrpt/sharedtask2025/refs/heads/master"
-        self.corpus_name = "eng.erst.gum"
+        self.corpus_name = ["eng.erst.gum","eng.dep.scidtb","eng.rst.oll"]
         self.dataset_dir.mkdir(exist_ok=True)
 
     def download_file(self, file_path, local_path):
@@ -29,7 +29,25 @@ class GUMDatasetDownloader:
             print(f"✗ Failed to download {file_path}: {e}")
             return False
 
-    def download_gum_corpus(self):
+    def count_files_in_dataset(self):
+        total_files = 0
+
+        for corpus in self.corpus_name:
+            folder_name = corpus.split(".")[-1]
+            folder_path = Path(self.dataset_dir) / folder_name
+
+            if folder_path.exists() and folder_path.is_dir():
+                # Count files recursively inside that folder
+                file_count = sum(len(files) for _, _, files in os.walk(folder_path))
+                print(f"{folder_name}: {file_count} files")
+                total_files += file_count
+            else:
+                print(f"⚠️ Skipping {folder_name} (folder not found)")
+
+        print(f"\nTotal files across selected corpora: {total_files}")
+        return total_files
+
+    def download_corpus(self):
         """Download train, dev, test files for eng.erst.gum"""
         print("=" * 70)
         print("Downloading eng.erst.gum dataset from DISRPT 2025")
@@ -38,26 +56,28 @@ class GUMDatasetDownloader:
         files_downloaded = []
         splits = ["train", "dev", "test"]
 
-        for split in splits:
-            print(f"\n📥 Downloading {split} split...")
+        for corpus in self.corpus_name:
+            #check if corpus is already downloaded
+            folder_name = corpus.split(".")[-1]
+            if Path(self.dataset_dir.joinpath(folder_name)).exists():
+                continue
 
-            # Download .tok files (tokenized text)
-            tok_file = f"data/{self.corpus_name}/{self.corpus_name}_{split}.tok"
-            tok_success = self.download_file(tok_file, f"gum/{split}.tok")
+            for split in splits:
+                print(f"\n📥 Downloading {split} split...")
 
-            # Download .conllu files (with full annotations including Seg labels)
-            conllu_file = f"data/{self.corpus_name}/{self.corpus_name}_{split}.conllu"
-            conllu_success = self.download_file(conllu_file, f"gum/{split}.conllu")
+                # Download .conllu files (with full annotations including Seg labels)
+                conllu_file = f"data/{corpus}/{corpus}_{split}.conllu"
+                conllu_success = self.download_file(conllu_file, f"{folder_name}/{split}.conllu")
 
-            if tok_success and conllu_success:
-                files_downloaded.append(split)
-                print(f"✓ {split} split complete")
+                if conllu_success:
+                    files_downloaded.append(split)
+                    print(f"✓ {folder_name}: {split} split complete")
 
+            if len(files_downloaded)%3 == 0:
+                print(f"\n✅ {folder_name}: Download complete! All splits ready for training.")
+            else:
+                print(f"\n⚠️ Only {len(files_downloaded)} splits downloaded successfully.")
 
+        count = self.count_files_in_dataset()
 
-        if len(files_downloaded) == 3:
-            print("\n✅ Download complete! All splits ready for training.")
-        else:
-            print(f"\n⚠️  Only {len(files_downloaded)} splits downloaded successfully.")
-
-        return len(files_downloaded) == 3
+        return count == 3 * len(self.corpus_name)

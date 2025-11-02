@@ -1,65 +1,130 @@
 from pathlib import Path
+from torch.utils.data import Dataset
 from transformers import AutoTokenizer
-from com.disrpt.segmenter.utils.data_downloader import GUMDatasetDownloader
-from com.disrpt.segmenter.utils.data_preprocesser import GUMEDUDataset
+from com.disrpt.segmenter.utils.data_downloader import DatasetDownloader
+from com.disrpt.segmenter.utils.data_preprocesser import EDUDataset
 import numpy as np
 
 
-def download_gum_dataset(dataset_dir="dataset"):
-    """Download eng.erst.gum dataset"""
-    downloader = GUMDatasetDownloader(dataset_dir)
-    return downloader.download_gum_corpus()
+def download_dataset(dataset_dir="dataset"):
+    """Download multiple EDU datasets"""
+    downloader = DatasetDownloader(dataset_dir)
+    return downloader.download_corpus()
 
 
-def load_gum_datasets(tokenizer, dataset_dir="dataset", max_length=512):
+def load_datasets(tokenizer, dataset_dir="dataset", max_length=512):
     """
-    Load train, dev, and test splits of eng.erst.gum
+    Load train, dev, and test splits from all datasets in dataset_dir
 
     Returns:
         train_dataset, dev_dataset, test_dataset
     """
-    gum_dir = Path(dataset_dir) / "gum"
+    dataset_path = Path(dataset_dir)
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
 
-    # Check if files exist
-    required_files = {
-        'train': gum_dir / "train.conllu",
-        'dev': gum_dir / "dev.conllu",
-        'test': gum_dir / "test.conllu"
-    }
+    # Find all dataset folders
+    dataset_folders = [d for d in dataset_path.iterdir() if d.is_dir()]
+    if not dataset_folders:
+        raise FileNotFoundError(f"No dataset folders found in {dataset_dir}")
 
-    missing_files = [name for name, path in required_files.items() if not path.exists()]
-    if missing_files:
-        raise FileNotFoundError(
-            f"Missing files for splits: {missing_files}\n"
-            f"Please run download_gum_dataset() first."
-        )
-
-    # Load datasets
     print("\n" + "=" * 70)
-    print("Loading GUM datasets for EDU segmentation")
+    print("Discovering datasets in:", dataset_dir)
     print("=" * 70)
+    print(f"Found {len(dataset_folders)} dataset(s): {[d.name for d in dataset_folders]}")
 
-    train_dataset = GUMEDUDataset(required_files['train'], tokenizer, max_length)
-    dev_dataset = GUMEDUDataset(required_files['dev'], tokenizer, max_length)
-    test_dataset = GUMEDUDataset(required_files['test'], tokenizer, max_length)
+    # Collect file paths by split
+    train_files = []
+    dev_files = []
+    test_files = []
+
+    for folder in dataset_folders:
+        dataset_name = folder.name
+
+        # Check for .conllu files
+        train_file = folder / "train.conllu"
+        dev_file = folder / "dev.conllu"
+        test_file = folder / "test.conllu"
+
+        if train_file.exists():
+            train_files.append(train_file)
+            print(f"  ✓ {dataset_name}/train.conllu")
+
+        if dev_file.exists():
+            dev_files.append(dev_file)
+            print(f"  ✓ {dataset_name}/dev.conllu")
+
+        if test_file.exists():
+            test_files.append(test_file)
+            print(f"  ✓ {dataset_name}/test.conllu")
+
+    # Verify we have files
+    if not train_files:
+        raise FileNotFoundError("No train.conllu files found in any dataset folder")
+
+    print("\n" + "=" * 70)
+    print("Loading and combining datasets for EDU segmentation")
+    print("=" * 70)
+    print(f"Train files: {len(train_files)}")
+    print(f"Dev files:   {len(dev_files)}")
+    print(f"Test files:  {len(test_files)}")
+
+    # Load and combine datasets
+    all_train_examples = []
+    all_dev_examples = []
+    all_test_examples = []
+
+    # Load train splits
+    for train_file in train_files:
+        print(f"\nLoading train: {train_file.parent.name}/{train_file.name}")
+        dataset = EDUDataset(train_file, tokenizer, max_length)
+        all_train_examples.extend(dataset.examples)
+
+    # Load dev splits
+    for dev_file in dev_files:
+        print(f"\nLoading dev: {dev_file.parent.name}/{dev_file.name}")
+        dataset = EDUDataset(dev_file, tokenizer, max_length)
+        all_dev_examples.extend(dataset.examples)
+
+    # Load test splits
+    for test_file in test_files:
+        print(f"\nLoading test: {test_file.parent.name}/{test_file.name}")
+        dataset = EDUDataset(test_file, tokenizer, max_length)
+        all_test_examples.extend(dataset.examples)
+
+    # Create combined datasets
+    class CombinedDataset(Dataset):
+        def __init__(self, examples):
+            self.examples = examples
+
+        def __len__(self):
+            return len(self.examples)
+
+        def __getitem__(self, idx):
+            return self.examples[idx]
+
+    train_dataset = CombinedDataset(all_train_examples)
+    dev_dataset = CombinedDataset(all_dev_examples)
+    test_dataset = CombinedDataset(all_test_examples)
 
     print("\n" + "=" * 70)
     print("Dataset Loading Complete!")
     print("=" * 70)
-    print(f"Train: {len(train_dataset)} examples")
-    print(f"Dev:   {len(dev_dataset)} examples")
-    print(f"Test:  {len(test_dataset)} examples")
+    print(f"Train: {len(train_dataset)} examples (from {len(train_files)} file(s))")
+    print(f"Dev:   {len(dev_dataset)} examples (from {len(dev_files)} file(s))")
+    print(f"Test:  {len(test_dataset)} examples (from {len(test_files)} file(s))")
     print("=" * 70)
 
     return train_dataset, dev_dataset, test_dataset
 
+
 if __name__ == "__main__":
 
     print("\n" + "=" * 35)
-    print("GUM Dataset Loader for EDU Segmentation")
+    print("Multi-Dataset EDU Segmentation Loader")
     print("=" * 35)
 
-    download_success = download_gum_dataset()
+    download_success = download_dataset()
 
     if not download_success:
         print("\n❌ Download failed. Please check your internet connection.")
@@ -77,7 +142,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("STEP 3: Load and Process Datasets")
     print("=" * 70)
-    train_dataset, dev_dataset, test_dataset = load_gum_datasets(tokenizer)
+    train_dataset, dev_dataset, test_dataset = load_datasets(tokenizer)
 
     # Show example
     print("\n" + "=" * 70)
@@ -97,7 +162,6 @@ if __name__ == "__main__":
     print("\n" + "✅" * 35)
     print("Dataset ready for training!")
     print("✅" * 35)
-
 
     print("\n" + "=" * 70)
     print("VALIDATION: Detailed Token & Label Inspection")
