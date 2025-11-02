@@ -1,6 +1,8 @@
 from pathlib import Path
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
+
+from com.disrpt.segmenter.utils.combined_dataset import CombinedDataset
 from com.disrpt.segmenter.utils.data_downloader import DatasetDownloader
 from com.disrpt.segmenter.utils.data_preprocesser import EDUDataset
 import numpy as np
@@ -17,7 +19,7 @@ def load_datasets(tokenizer, dataset_dir="dataset", max_length=512):
     Load train, dev, and test splits from all datasets in dataset_dir
 
     Returns:
-        train_dataset, dev_dataset, test_dataset
+        train_dataset, dev_dataset, test_dataset, dataset_tracking
     """
     dataset_path = Path(dataset_dir)
     if not dataset_path.exists():
@@ -69,40 +71,57 @@ def load_datasets(tokenizer, dataset_dir="dataset", max_length=512):
     print(f"Dev files:   {len(dev_files)}")
     print(f"Test files:  {len(test_files)}")
 
-    # Load and combine datasets
+    # Load and combine datasets with tracking
     all_train_examples = []
     all_dev_examples = []
     all_test_examples = []
 
+    # Track which dataset each example came from
+    train_tracking = {}
+    dev_tracking = {}
+    test_tracking = {}
+
     # Load train splits
     for train_file in train_files:
-        print(f"\nLoading train: {train_file.parent.name}/{train_file.name}")
+        dataset_name = train_file.parent.name
+        print(f"\nLoading train: {dataset_name}/{train_file.name}")
         dataset = EDUDataset(train_file, tokenizer, max_length)
+
+        start_idx = len(all_train_examples)
         all_train_examples.extend(dataset.examples)
+        end_idx = len(all_train_examples)
+
+        # Track indices for this dataset
+        for idx in range(start_idx, end_idx):
+            train_tracking[idx] = dataset_name
 
     # Load dev splits
     for dev_file in dev_files:
-        print(f"\nLoading dev: {dev_file.parent.name}/{dev_file.name}")
+        dataset_name = dev_file.parent.name
+        print(f"\nLoading dev: {dataset_name}/{dev_file.name}")
         dataset = EDUDataset(dev_file, tokenizer, max_length)
+
+        start_idx = len(all_dev_examples)
         all_dev_examples.extend(dataset.examples)
+        end_idx = len(all_dev_examples)
+
+        for idx in range(start_idx, end_idx):
+            dev_tracking[idx] = dataset_name
 
     # Load test splits
     for test_file in test_files:
-        print(f"\nLoading test: {test_file.parent.name}/{test_file.name}")
+        dataset_name = test_file.parent.name
+        print(f"\nLoading test: {dataset_name}/{test_file.name}")
         dataset = EDUDataset(test_file, tokenizer, max_length)
+
+        start_idx = len(all_test_examples)
         all_test_examples.extend(dataset.examples)
+        end_idx = len(all_test_examples)
+
+        for idx in range(start_idx, end_idx):
+            test_tracking[idx] = dataset_name
 
     # Create combined datasets
-    class CombinedDataset(Dataset):
-        def __init__(self, examples):
-            self.examples = examples
-
-        def __len__(self):
-            return len(self.examples)
-
-        def __getitem__(self, idx):
-            return self.examples[idx]
-
     train_dataset = CombinedDataset(all_train_examples)
     dev_dataset = CombinedDataset(all_dev_examples)
     test_dataset = CombinedDataset(all_test_examples)
@@ -115,7 +134,13 @@ def load_datasets(tokenizer, dataset_dir="dataset", max_length=512):
     print(f"Test:  {len(test_dataset)} examples (from {len(test_files)} file(s))")
     print("=" * 70)
 
-    return train_dataset, dev_dataset, test_dataset
+    dataset_tracking = {
+        'train': train_tracking,
+        'dev': dev_tracking,
+        'test': test_tracking
+    }
+
+    return train_dataset, dev_dataset, test_dataset, dataset_tracking
 
 
 if __name__ == "__main__":
@@ -142,7 +167,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("STEP 3: Load and Process Datasets")
     print("=" * 70)
-    train_dataset, dev_dataset, test_dataset = load_datasets(tokenizer)
+    train_dataset, dev_dataset, test_dataset, dataset_tracking = load_datasets(tokenizer)
 
     # Show example
     print("\n" + "=" * 70)
@@ -220,62 +245,86 @@ if __name__ == "__main__":
     print("✓ All shapes match correctly")
 
     print("\n" + "=" * 70)
-    print("DATASET-WIDE ANALYSIS")
+    print("DATASET-WIDE ANALYSIS (Per Dataset)")
     print("=" * 70)
 
-    # Analyze multiple examples
-    sequence_lengths = []
-    edu_counts = []
-    valid_token_counts = []
+    # Analyze by dataset
+    dataset_stats = {}
+    train_tracking_dict = dataset_tracking['train']
 
-    for i in range(min(100, len(train_dataset))):
+    for i in range(len(train_dataset)):
         example = train_dataset[i]
         labels = example['labels']
         attention_mask = example['attention_mask']
 
-        # Count real tokens (attention_mask = 1)
-        real_tokens = attention_mask.sum().item()
-        sequence_lengths.append(real_tokens)
+        source = train_tracking_dict.get(i, 'unknown')
 
-        # Count EDU boundaries
+        if source not in dataset_stats:
+            dataset_stats[source] = {
+                'lengths': [],
+                'edu_counts': [],
+                'valid_tokens': []
+            }
+
+        real_tokens = attention_mask.sum().item()
         edu_starts = (labels == 1).sum().item()
-        edu_counts.append(edu_starts)
-
-        # Count valid labels (not -100, not padding)
         valid_labels = ((labels != -100) & (attention_mask == 1)).sum().item()
-        valid_token_counts.append(valid_labels)
 
-    print(f"\nSequence Length Statistics (first 100 examples):")
-    print(f"  Mean length:    {np.mean(sequence_lengths):.1f} tokens")
-    print(f"  Median length:  {np.median(sequence_lengths):.1f} tokens")
-    print(f"  Min length:     {np.min(sequence_lengths)} tokens")
-    print(f"  Max length:     {np.max(sequence_lengths)} tokens")
+        dataset_stats[source]['lengths'].append(real_tokens)
+        dataset_stats[source]['edu_counts'].append(edu_starts)
+        dataset_stats[source]['valid_tokens'].append(valid_labels)
 
-    print(f"\nEDU Boundaries per Sequence:")
-    print(f"  Mean EDU starts:   {np.mean(edu_counts):.2f}")
-    print(f"  Median EDU starts: {np.median(edu_counts):.1f}")
-    print(f"  Total EDUs:        {np.sum(edu_counts)}")
+    # Print stats per dataset
+    for dataset_name in sorted(dataset_stats.keys()):
+        stats = dataset_stats[dataset_name]
+        print(f"\n📊 {dataset_name.upper()} Dataset:")
+        print(f"  Examples:             {len(stats['lengths'])}")
+        print(f"  Mean length:          {np.mean(stats['lengths']):.1f} tokens")
+        print(f"  Median length:        {np.median(stats['lengths']):.1f} tokens")
+        print(f"  Min/Max length:       {np.min(stats['lengths'])}/{np.max(stats['lengths'])} tokens")
+        print(f"  Mean EDUs/sequence:   {np.mean(stats['edu_counts']):.2f}")
+        print(f"  Total EDUs:           {np.sum(stats['edu_counts'])}")
+        print(f"  Mean valid tokens:    {np.mean(stats['valid_tokens']):.1f}")
 
-    print(f"\nValid Token Statistics:")
-    print(f"  Mean valid tokens: {np.mean(valid_token_counts):.1f}")
+    # Overall combined stats
+    print(f"\n📊 COMBINED Dataset:")
+    all_lengths = [l for s in dataset_stats.values() for l in s['lengths']]
+    all_edus = [e for s in dataset_stats.values() for e in s['edu_counts']]
+    all_valid = [v for s in dataset_stats.values() for v in s['valid_tokens']]
 
-    # Show a few examples
+    print(f"  Total examples:       {len(all_lengths)}")
+    print(f"  Mean length:          {np.mean(all_lengths):.1f} tokens")
+    print(f"  Median length:        {np.median(all_lengths):.1f} tokens")
+    print(f"  Min/Max length:       {np.min(all_lengths)}/{np.max(all_lengths)} tokens")
+    print(f"  Mean EDUs/sequence:   {np.mean(all_edus):.2f}")
+    print(f"  Total EDUs:           {np.sum(all_edus)}")
+    print(f"  Mean valid tokens:    {np.mean(all_valid):.1f}")
+
+    # Show sample sequences from each dataset
     print("\n" + "=" * 70)
-    print("Sample Sequences (first 5):")
+    print("Sample Sequences (from each dataset):")
     print("=" * 70)
-    for i in range(min(5, len(train_dataset))):
-        example = train_dataset[i]
-        tokens = tokenizer.convert_ids_to_tokens(example['input_ids'])
-        labels = example['labels']
-        attention_mask = example['attention_mask']
 
-        real_tokens = attention_mask.sum().item()
-        edu_count = (labels == 1).sum().item()
+    # Get first example from each dataset
+    shown_datasets = set()
+    for i in range(len(train_dataset)):
+        source = train_tracking_dict.get(i, 'unknown')
 
-        # Get actual text (excluding [CLS], [SEP], [PAD])
-        text_tokens = [t for t, m in zip(tokens, attention_mask) if m == 1 and t not in ['[CLS]', '[SEP]']]
-        text = tokenizer.convert_tokens_to_string(text_tokens)
+        if source not in shown_datasets:
+            example = train_dataset[i]
+            tokens = tokenizer.convert_ids_to_tokens(example['input_ids'])
+            labels = example['labels']
+            attention_mask = example['attention_mask']
 
-        print(f"\n[Example {i}]")
-        print(f"  Length: {real_tokens} tokens | EDUs: {edu_count}")
-        print(f"  Text: {text[:100]}...")
+            real_tokens = attention_mask.sum().item()
+            edu_count = (labels == 1).sum().item()
+
+            # Get actual text (excluding [CLS], [SEP], [PAD])
+            text_tokens = [t for t, m in zip(tokens, attention_mask) if m == 1 and t not in ['[CLS]', '[SEP]']]
+            text = tokenizer.convert_tokens_to_string(text_tokens)
+
+            print(f"\n[{source.upper()}]")
+            print(f"  Length: {real_tokens} tokens | EDUs: {edu_count}")
+            print(f"  Text: {text[:150]}...")
+
+            shown_datasets.add(source)

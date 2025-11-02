@@ -15,7 +15,7 @@ from transformers import (
 from peft import LoraConfig, get_peft_model, TaskType
 from sklearn.metrics import precision_recall_fscore_support, accuracy_score, classification_report
 import wandb
-from com.disrpt.segmenter.dataset_prep import download_gum_dataset, load_gum_datasets
+from com.disrpt.segmenter.dataset_prep import download_gum_dataset, load_gum_datasets, download_dataset, load_datasets
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -615,7 +615,7 @@ def main():
     print("\n" + "=" * 70)
     print("STEP 1: Download Dataset")
     print("=" * 70)
-    download_success = download_gum_dataset()
+    download_success = download_dataset()
 
     if not download_success:
         print("\n❌ Dataset download failed!")
@@ -628,7 +628,7 @@ def main():
     print("STEP 2: Load Datasets")
     print("=" * 70)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    train_dataset, dev_dataset, test_dataset = load_gum_datasets(tokenizer)
+    train_dataset, dev_dataset, test_dataset = load_datasets(tokenizer)
 
     # Log dataset info to W&B
     if args.use_wandb:
