@@ -12,11 +12,13 @@ from transformers import (
     DataCollatorForTokenClassification,
     EarlyStoppingCallback
 )
-from peft import LoraConfig, get_peft_model, TaskType
+from peft import LoraConfig, get_peft_model, TaskType,PeftModel
 from sklearn.metrics import precision_recall_fscore_support, accuracy_score, classification_report
 import wandb
-from com.disrpt.segmenter.dataset_prep import download_gum_dataset, load_gum_datasets
+from com.disrpt.segmenter.dataset_prep import download_dataset, load_datasets
 import warnings
+
+from com.disrpt.segmenter.utils.wandb_config import WandbEpochMetricsCallback
 
 warnings.filterwarnings("ignore")
 
@@ -146,7 +148,8 @@ class BERTFineTuning:
             mlp_dropout=0.3,
             lora_r=16,
             lora_alpha=32,
-            lora_dropout=0.1
+            lora_dropout=0.1,
+            use_wandb=False
     ):
         """
         Args:
@@ -162,6 +165,7 @@ class BERTFineTuning:
         self.device = device
         self.model_name = model_name
         self.num_labels = num_labels
+        self.use_wandb = use_wandb
 
         print("\n" + "=" * 70)
         print(f"Initializing {model_name} with LoRA + MLP Classifier")
@@ -343,6 +347,10 @@ class BERTFineTuning:
         )
 
         # Initialize trainer
+        callbacks = [early_stopping]
+        if self.use_wandb:
+            callbacks.append(WandbEpochMetricsCallback())
+
         trainer = Trainer(
             model=self.model,
             args=training_args,
@@ -350,7 +358,7 @@ class BERTFineTuning:
             eval_dataset=eval_dataset,
             data_collator=data_collator,
             compute_metrics=self.compute_metrics,
-            callbacks=[early_stopping]
+            callbacks=callbacks
         )
 
         # Log model architecture to W&B
@@ -436,7 +444,6 @@ class BERTFineTuning:
         )
 
         # Load LoRA weights
-        from peft import PeftModel
         model = PeftModel.from_pretrained(base_model, model_path)
         model = model.to(self.device)
         model.eval()
@@ -472,6 +479,13 @@ class BERTFineTuning:
 
         test_results = trainer.evaluate(test_dataset)
 
+        if wandb.run is not None:
+            wandb.log({
+                "test/loss": test_results.get("eval_loss", 0),
+                "test/accuracy": test_results.get("eval_accuracy", 0),
+                "test/precision": test_results.get("eval_precision", 0),
+                "test/recall": test_results.get("eval_recall", 0),
+            })
         # Print metrics
         print("\n📊 TEST METRICS:")
         print("-" * 70)
@@ -556,7 +570,7 @@ def parse_args():
 
     # Training configuration
     parser.add_argument("--output_dir", type=str, default="./output-2/edu_segmenter")
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--learning_rate", type=float, default=3e-4)
     parser.add_argument("--save_every_n_epochs", type=int, default=2)
@@ -576,9 +590,9 @@ def parse_args():
 def main():
     """Complete training pipeline with W&B logging"""
 
-    print("\n" + "🎯" * 35)
+    print("\n" + "=" * 35)
     print("EDU SEGMENTATION: BERT + LoRA + MLP")
-    print("🎯" * 35)
+    print("=" * 35)
 
     args = parse_args()
 
@@ -615,7 +629,7 @@ def main():
     print("\n" + "=" * 70)
     print("STEP 1: Download Dataset")
     print("=" * 70)
-    download_success = download_gum_dataset()
+    download_success = download_dataset()
 
     if not download_success:
         print("\n❌ Dataset download failed!")
@@ -628,7 +642,7 @@ def main():
     print("STEP 2: Load Datasets")
     print("=" * 70)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    train_dataset, dev_dataset, test_dataset = load_gum_datasets(tokenizer)
+    train_dataset, dev_dataset, test_dataset, _ = load_datasets(tokenizer)
 
     # Log dataset info to W&B
     if args.use_wandb:
@@ -653,7 +667,8 @@ def main():
         mlp_dropout=args.mlp_dropout,
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout
+        lora_dropout=args.lora_dropout,
+        use_wandb=args.use_wandb
     )
 
     # Step 4: Train model
@@ -684,9 +699,9 @@ def main():
     )
 
     # Final summary
-    print("\n" + "🎉" * 35)
+    print("\n" + "=*=" * 35)
     print("TRAINING PIPELINE COMPLETE!")
-    print("🎉" * 35)
+    print("=*=" * 35)
 
     print("\n📊 FINAL RESULTS SUMMARY:")
     print("=" * 70)

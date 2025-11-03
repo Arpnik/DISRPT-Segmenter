@@ -1,7 +1,7 @@
 from torch.utils.data import Dataset
 import torch
 
-class GUMEDUDataset(Dataset):
+class EDUDataset(Dataset):
     """
     Dataset loader for eng.erst.gum EDU segmentation task.
 

@@ -13,8 +13,11 @@ from transformers import (
 from peft import LoraConfig, get_peft_model, TaskType
 from sklearn.metrics import precision_recall_fscore_support, accuracy_score, classification_report
 import wandb
-from com.disrpt.segmenter.dataset_prep import download_gum_dataset, load_gum_datasets
+from com.disrpt.segmenter.dataset_prep import download_dataset, load_datasets
 import warnings
+
+from com.disrpt.segmenter.utils.wandb_config import WandbEpochMetricsCallback
+
 warnings.filterwarnings("ignore")
 
 
@@ -156,6 +159,11 @@ class BERTFineTuning:
             early_stopping_threshold=early_stopping_threshold
         )
 
+        # Initialize trainer
+        callbacks = [early_stopping]
+        if self.use_wandb:
+            callbacks.append(WandbEpochMetricsCallback())
+
         trainer = Trainer(
             model=self.model,
             args=training_args,
@@ -163,7 +171,7 @@ class BERTFineTuning:
             eval_dataset=eval_dataset,
             data_collator=data_collator,
             compute_metrics=self.compute_metrics,
-            callbacks=[early_stopping]
+            callbacks=callbacks
         )
 
         print("\n🚀 TRAINING STARTED 🚀\n")
@@ -303,14 +311,14 @@ def main():
         )
 
     print("\nSTEP 1: Download Dataset")
-    download_success = download_gum_dataset()
+    download_success = download_dataset()
     if not download_success:
         print("\n❌ Dataset download failed!")
         return
 
     print("\nSTEP 2: Load Datasets")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    train_dataset, dev_dataset, test_dataset = load_gum_datasets(tokenizer)
+    train_dataset, dev_dataset, test_dataset, distribution = load_datasets(tokenizer)
 
     print("\nSTEP 3: Initialize Model")
     device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
