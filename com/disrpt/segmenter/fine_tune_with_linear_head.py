@@ -15,6 +15,9 @@ from sklearn.metrics import precision_recall_fscore_support, accuracy_score, cla
 import wandb
 from com.disrpt.segmenter.dataset_prep import download_dataset, load_datasets
 import warnings
+
+from com.disrpt.segmenter.utils.wandb_config import WandbEpochMetricsCallback
+
 warnings.filterwarnings("ignore")
 
 
@@ -156,6 +159,11 @@ class BERTFineTuning:
             early_stopping_threshold=early_stopping_threshold
         )
 
+        # Initialize trainer
+        callbacks = [early_stopping]
+        if self.use_wandb:
+            callbacks.append(WandbEpochMetricsCallback())
+
         trainer = Trainer(
             model=self.model,
             args=training_args,
@@ -163,7 +171,7 @@ class BERTFineTuning:
             eval_dataset=eval_dataset,
             data_collator=data_collator,
             compute_metrics=self.compute_metrics,
-            callbacks=[early_stopping]
+            callbacks=callbacks
         )
 
         print("\n🚀 TRAINING STARTED 🚀\n")

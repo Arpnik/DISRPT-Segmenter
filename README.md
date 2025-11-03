@@ -81,28 +81,28 @@ There are 2 segmenters defined which use a transformer model (DistilBERT or BERT
 
 #### **Model Architecture Comparison**
 
-| Feature | Segmenter_tuning.py | fine_tuning.py |
-|---------|-------------------|----------------|
-| Base Model | DistilBERT/BERT | DistilBERT/BERT |
-| LoRA Adaptation | ✓ (query, value) | ✓ (query, value) |
-| Classification Head | Single Linear Layer | Multi-Layer Perceptron |
-| Head Architecture | `[768 → 2]` | `[768 → 256 → 128 → 2]` |
-| Dropout | None | 0.3 (configurable) |
-| Activation | None | GELU (configurable) |
+| Feature | fine_tune_with_linear_head.py | fine_tune_with_mlp.py |
+|---------|-------------------------------|----------------|
+| Base Model | DistilBERT/BERT               | DistilBERT/BERT |
+| LoRA Adaptation | ✓ (query, value)              | ✓ (query, value) |
+| Classification Head | Single Linear Layer           | Multi-Layer Perceptron |
+| Head Architecture | `[768 → 2]`                   | `[768 → 256 → 128 → 2]` |
+| Dropout | None                          | 0.3 (configurable) |
+| Activation | None                          | GELU (configurable) |
 
 ---
 #### **Running the Fine-tuning Scripts**
 
-##### **Option 1: Segmenter_tuning.py (Linear Head)**
+##### **Option 1: fine_tune_with_linear_head.py**
 
 **Basic usage:**
 ```bash
-python -m com.disrpt.segmenter.segmenter_tuning
+python -m com.disrpt.segmenter.fine_tune_with_linear_head
 ```
 
 **With custom parameters:**
 ```bash
-python -m com.disrpt.segmenter.segmenter_tuning \
+python -m com.disrpt.segmenter.fine_tune_with_linear_head \
   --model_name distilbert-base-uncased \
   --output_dir ./output/edu_segmenter \
   --epochs 10 \
@@ -135,16 +135,16 @@ python -m com.disrpt.segmenter.segmenter_tuning \
 
 ---
 
-##### **Option 2: fine_tuning.py (MLP Head)**
+##### **Option 2: fine_tune_with_mlp.py**
 
 **Basic usage:**
 ```bash
- python -m com.disrpt.segmenter.fine_tunning
+ python -m com.disrpt.segmenter.fine_tune_with_mlp
  ```
 
 **With custom parameters:**
 ```bash
-python -m com.disrpt.segmenter.fine_tunning \
+python -m com.disrpt.segmenter.fine_tune_with_mlp \
   --model_name distilbert-base-uncased \
   --output_dir ./output-2/edu_segmenter \
   --epochs 10 \
@@ -202,8 +202,11 @@ Both scripts support any HuggingFace BERT-based model:
 
 Both scripts support optional W&B logging for experiment tracking:
 ```bash
+#Set W&B API key
+export WANDB_API_KEY="your_wandb_api_key_here"
+
 # Enable W&B logging
-python fine_tuning.py --use_wandb
+python fine_tune_with_linear_head.py --use_wandb
 
 # Custom W&B project and run name
 python fine_tuning.py \
@@ -238,66 +241,4 @@ output/edu_segmenter/
 ├── logs/                    # TensorBoard logs
 ├── checkpoint-XXX/          # Periodic checkpoints
 └── ...
-```
-
----
-
-#### **Training Pipeline Steps**
-
-Both scripts execute the following pipeline:
-
-1. **Download Dataset**: Automatically downloads GUM corpus
-2. **Load Datasets**: Tokenizes and prepares train/dev/test splits
-3. **Initialize Model**: Loads pre-trained model + applies LoRA
-4. **Train Model**: Fine-tunes with early stopping
-5. **Evaluate Test Set**: Final evaluation on held-out test data
-
----
-
-#### **Hardware Requirements**
-
-- **Minimum**: 8GB GPU VRAM (for DistilBERT)
-- **Recommended**: 16GB+ GPU VRAM (for BERT-base)
-- **CPU**: Training possible but significantly slower
-- **Storage**: ~2GB for models and datasets
-
----
-
-#### **When to Use Which Script?**
-
-| Use Case | Recommended Script |
-|----------|-------------------|
-| Faster training, fewer parameters | segmenter_tuning.py |
-| Better accuracy, more capacity | fine_tuning.py |
-| Limited GPU memory | segmenter_tuning.py |
-| Maximum performance | fine_tuning.py |
-| Quick baseline | segmenter_tuning.py |
-| Production deployment | fine_tuning.py |
-
-
-#### **Example Training Sessions**
-
-**Quick experiment (DistilBERT + Linear Head):**
-```bash
-python segmenter_tuning.py --epochs 5 --batch_size 32
-```
-
-**Full training with W&B (BERT + MLP Head):**
-```bash
-python fine_tuning.py \
-  --model_name bert-base-uncased \
-  --epochs 15 \
-  --batch_size 16 \
-  --learning_rate 2e-4 \
-  --mlp_dims 512 256 128 \
-  --use_wandb \
-  --wandb_project edu-segmentation-final
-```
-
-**Resume training with different learning rate:**
-```bash
-python fine_tuning.py \
-  --output_dir ./output-2/edu_segmenter \
-  --learning_rate 1e-4 \
-  --epochs 5
 ```
