@@ -27,10 +27,11 @@ class BERTFineTuning:
     early stopping, and comprehensive evaluation.
     """
 
-    def __init__(self, model_name, num_labels=2, device='cuda'):
+    def __init__(self, model_name, num_labels=2, device='cuda', use_wandb=False):
         self.device = device
         self.model_name = model_name
         self.num_labels = num_labels
+        self.use_wandb = use_wandb
 
         print("\n" + "=" * 70)
         print(f"Initializing {model_name} with LoRA")
@@ -322,7 +323,7 @@ def main():
 
     print("\nSTEP 3: Initialize Model")
     device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
-    bert_model = BERTFineTuning(MODEL_NAME, num_labels=2, device=device)
+    bert_model = BERTFineTuning(MODEL_NAME, num_labels=2, device=device, use_wandb=args.use_wandb)
 
     print("\nSTEP 4: Train Model")
     eval_results = bert_model.train_model(
