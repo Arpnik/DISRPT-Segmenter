@@ -5,11 +5,16 @@ import wandb
 class WandbEpochMetricsCallback(TrainerCallback):
     """
     Logs metrics to W&B with epoch as the x-axis for proper graph visualization.
+    Handles both training and evaluation metrics.
     """
+
+    def __init__(self):
+        super().__init__()
+        self.training_step = 0
 
     def on_evaluate(self, args, state, control, metrics=None, **kwargs):
         """
-        Called after each evaluation. Logs metrics to W&B with epoch as x-axis.
+        Called after each evaluation. Logs eval/validation metrics to W&B with epoch as x-axis.
         """
         if metrics and wandb.run is not None and state.epoch is not None:
             # Create log dictionary with all eval metrics
@@ -26,6 +31,8 @@ class WandbEpochMetricsCallback(TrainerCallback):
                 "eval/precision_class_1": metrics.get("eval_precision_class_1"),
                 "eval/recall_class_0": metrics.get("eval_recall_class_0"),
                 "eval/recall_class_1": metrics.get("eval_recall_class_1"),
+                "eval/support_class_0": metrics.get("eval_support_class_0"),
+                "eval/support_class_1": metrics.get("eval_support_class_1"),
             }
 
             # Remove None values (but keep epoch)
@@ -46,19 +53,22 @@ class WandbEpochMetricsCallback(TrainerCallback):
                     print(f"  {k:<25} {log_dict[k]:.4f}")
 
             # Print per-class metrics
-            print(f"\n  Per-class metrics:")
-            class_metrics = [k for k in log_dict.keys() if "class_" in k]
-            for k in sorted(class_metrics):
-                print(f"    {k:<23} {log_dict[k]:.4f}")
+            if any("class_" in k for k in log_dict.keys()):
+                print(f"\n  Per-class metrics:")
+                class_metrics = [k for k in log_dict.keys() if "class_" in k and "support" not in k]
+                for k in sorted(class_metrics):
+                    print(f"    {k:<23} {log_dict[k]:.4f}")
 
             print(f"{'=' * 70}\n")
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         """
         Log training metrics with epoch as x-axis.
+        Captures loss, learning rate, and gradient norm during training.
         """
         if logs and wandb.run is not None and state.epoch is not None:
             # Only process training logs (not eval logs)
+            # Eval logs contain "eval_loss", training logs contain just "loss"
             if "loss" in logs and "eval_loss" not in logs:
                 log_dict = {
                     "epoch": state.epoch,  # Include epoch for x-axis
@@ -72,7 +82,18 @@ class WandbEpochMetricsCallback(TrainerCallback):
                 if "grad_norm" in logs:
                     log_dict["train/grad_norm"] = logs["grad_norm"]
 
-
-                # Log with epoch
-                if len(log_dict) > 1:  # More than just epoch
+                # Log with epoch (if we have more than just epoch)
+                if len(log_dict) > 1:
                     wandb.log(log_dict)
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        """
+        Called at the end of each epoch.
+        Can be used for additional epoch-level logging if needed.
+        """
+        if wandb.run is not None and state.epoch is not None:
+            # Log epoch completion
+            wandb.log({
+                "epoch": state.epoch,
+                "training/epoch_completed": state.epoch
+            })
