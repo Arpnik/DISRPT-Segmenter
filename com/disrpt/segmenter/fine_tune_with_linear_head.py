@@ -1,6 +1,5 @@
 import argparse
 import torch
-import numpy as np
 from pathlib import Path
 from transformers import (
     AutoTokenizer,
@@ -11,11 +10,12 @@ from transformers import (
     EarlyStoppingCallback
 )
 from peft import LoraConfig, get_peft_model, TaskType
-from sklearn.metrics import precision_recall_fscore_support, accuracy_score, classification_report
 import wandb
 from com.disrpt.segmenter.dataset_prep import download_dataset, load_datasets
 import warnings
 
+from com.disrpt.segmenter.utils.Helper import compute_metrics, evaluate_test_set
+from com.disrpt.segmenter.utils.lora_config import LoRAConfigBuilder
 from com.disrpt.segmenter.utils.wandb_config import WandbEpochMetricsCallback
 
 warnings.filterwarnings("ignore")
@@ -32,10 +32,8 @@ class BERTFineTuning:
             model_name,
             num_labels=2,
             device='cuda',
-            lora_r=16,
-            lora_alpha=32,
-            lora_dropout=0.1,
-            use_wandb=False
+            use_wandb=False,
+            lora_config_builder: LoRAConfigBuilder = None,
     ):
         """
         Args:
@@ -61,73 +59,11 @@ class BERTFineTuning:
             ignore_mismatched_sizes=True
         )
 
-        lora_config = LoraConfig(
-            task_type=TaskType.TOKEN_CLS,
-            r=lora_r,
-            lora_alpha=lora_alpha,
-            lora_dropout=lora_dropout,
-            target_modules=["q_lin", "v_lin"] if "distilbert" in model_name.lower()
-            else ["query", "value"],
-            bias="none"
-        )
+        lora_config = lora_config_builder.build(model)
 
         self.model = get_peft_model(model, lora_config)
         print("\n📊 Trainable Parameters:")
         self.model.print_trainable_parameters()
-
-    @staticmethod
-    def compute_metrics(pred):
-        """
-        Compute precision, recall, F1, and accuracy.
-        Logs to W&B if active.
-        """
-        predictions, labels = pred
-        predictions = np.argmax(predictions, axis=2)
-
-        # Flatten and filter out -100 labels
-        true_predictions = []
-        true_labels = []
-
-        for prediction, label in zip(predictions, labels):
-            for pred_label, true_label in zip(prediction, label):
-                if true_label != -100:
-                    true_predictions.append(pred_label)
-                    true_labels.append(true_label)
-
-        # Calculate metrics
-        precision, recall, f1, _ = precision_recall_fscore_support(
-            true_labels,
-            true_predictions,
-            average='binary',
-            pos_label=1,
-            zero_division=0
-        )
-        acc = accuracy_score(true_labels, true_predictions)
-
-        # Also calculate per-class metrics for W&B
-        precision_per_class, recall_per_class, f1_per_class, support = precision_recall_fscore_support(
-            true_labels,
-            true_predictions,
-            average=None,
-            zero_division=0
-        )
-
-        metrics = {
-            'accuracy': acc,
-            'precision': precision,
-            'recall': recall,
-            'f1': f1,
-            'precision_class_0': precision_per_class[0],
-            'precision_class_1': precision_per_class[1],
-            'recall_class_0': recall_per_class[0],
-            'recall_class_1': recall_per_class[1],
-            'f1_class_0': f1_per_class[0],
-            'f1_class_1': f1_per_class[1],
-            'support_class_0': int(support[0]),
-            'support_class_1': int(support[1])
-        }
-
-        return metrics
 
     def train_model(
         self,
@@ -207,7 +143,7 @@ class BERTFineTuning:
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             data_collator=data_collator,
-            compute_metrics=self.compute_metrics,
+            compute_metrics=compute_metrics,
             callbacks=callbacks
         )
 
@@ -271,111 +207,6 @@ class BERTFineTuning:
 
         return eval_results
 
-    def evaluate_test_set(self, test_dataset, model_path, batch_size=32):
-        """
-        Load trained model and evaluate on test set.
-        Logs results to W&B.
-        """
-        print("\n" + "=" * 70)
-        print("LOADING MODEL FOR TEST EVALUATION")
-        print("=" * 70)
-        print(f"Model path: {model_path}")
-        print(f"Test examples: {len(test_dataset)}")
-
-        # Load tokenizer and model
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        model = AutoModelForTokenClassification.from_pretrained(
-            model_path, num_labels=self.num_labels
-        ).to(self.device)
-        model.eval()
-
-        print("✓ Model loaded successfully")
-
-        # Data collator
-        data_collator = DataCollatorForTokenClassification(
-            tokenizer=tokenizer,
-            padding=True
-        )
-
-        # Evaluation arguments
-        eval_args = TrainingArguments(
-            output_dir="./temp_eval",
-            per_device_eval_batch_size=batch_size,
-            dataloader_num_workers=4,
-            fp16=torch.cuda.is_available(),
-            report_to="none"
-        )
-
-        # Create trainer
-        trainer = Trainer(
-            model=model,
-            args=eval_args,
-            data_collator=data_collator,
-            compute_metrics=self.compute_metrics
-        )
-
-        print("\n" + "=" * 70)
-        print("TEST SET EVALUATION")
-        print("=" * 70)
-
-        test_results = trainer.evaluate(test_dataset)
-
-        # Print metrics
-        print("\n📊 TEST METRICS:")
-        print("-" * 70)
-        for key, value in test_results.items():
-            if isinstance(value, (int, float)):
-                print(f"{key:.<50} {value:.4f}")
-
-        # Log to W&B
-        if wandb.run is not None:
-            wandb.log({f"test_{k}": v for k, v in test_results.items()})
-
-        # Get predictions for classification report
-        predictions = trainer.predict(test_dataset)
-        pred_labels = np.argmax(predictions.predictions, axis=2)
-        true_labels = predictions.label_ids
-
-        # Flatten and filter
-        flat_preds = []
-        flat_labels = []
-        for preds, labels in zip(pred_labels, true_labels):
-            for pred, label in zip(preds, labels):
-                if label != -100:
-                    flat_preds.append(pred)
-                    flat_labels.append(label)
-
-        # Classification report
-        print("\n" + "=" * 70)
-        print("DETAILED CLASSIFICATION REPORT")
-        print("=" * 70)
-        print("\nClass Labels:")
-        print("  0 = EDU Continue (token within current EDU)")
-        print("  1 = EDU Start (token begins new EDU)\n")
-
-        report = classification_report(
-            flat_labels,
-            flat_preds,
-            target_names=['EDU Continue (0)', 'EDU Start (1)'],
-            digits=4
-        )
-        print(report)
-
-        # Log confusion matrix to W&B
-        if wandb.run is not None:
-            from sklearn.metrics import confusion_matrix
-            cm = confusion_matrix(flat_labels, flat_preds)
-            wandb.log({
-                "test_confusion_matrix": wandb.plot.confusion_matrix(
-                    probs=None,
-                    y_true=flat_labels,
-                    preds=flat_preds,
-                    class_names=['Continue', 'Start']
-                )
-            })
-
-        return test_results
-
 
 # ============================================================================
 # MAIN TRAINING PIPELINE
@@ -397,14 +228,18 @@ def parse_args():
                         help="LoRA alpha")
     parser.add_argument("--lora_dropout", type=float, default=0.1,
                         help="LoRA dropout")
+    parser.add_argument("--lora_layers", type=str, default="auto",
+                        help="Comma-separated LoRA target modules (e.g. 'query,value') or 'auto' to detect automatically"
+                        )
 
     # Training configuration
     parser.add_argument("--output_dir", type=str, default="./output-1/edu_segmenter_linear")
-    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--epochs", type=int, default=4)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--learning_rate", type=float, default=3e-4)
     parser.add_argument("--save_every_n_epochs", type=int, default=2)
     parser.add_argument("--early_stopping_patience", type=int, default=3)
+
 
     # W&B configuration
     parser.add_argument("--use_wandb", action="store_true",
@@ -413,6 +248,8 @@ def parse_args():
                         help="W&B project name")
     parser.add_argument("--wandb_run_name", type=str, default="",
                         help="W&B run name (auto-generated if empty)")
+    parser.add_argument("--wandb_group", type=str, default="bert-lora-linear-head",
+                        help="W&B run group name")
 
     return parser.parse_args()
 
@@ -440,6 +277,7 @@ def main():
         wandb.init(
             project=args.wandb_project,
             name=run_name,
+            group=args.wandb_group if args.wandb_group else None,
             config={
                 "model_name": MODEL_NAME,
                 "epochs": NUM_EPOCHS,
@@ -486,15 +324,24 @@ def main():
     print("=" * 70)
     device = 'cuda' if torch.cuda.is_available() else \
         'mps' if torch.backends.mps.is_available() else 'cpu'
+    print("Device for training:", device)
+
+    # Create LoRA configuration builder
+    lora_config_builder = LoRAConfigBuilder.from_string(
+        model_name=MODEL_NAME,
+        target_string=args.lora_layers,
+        r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+    )
+
 
     bert_model = BERTFineTuning(
         model_name=MODEL_NAME,
         num_labels=2,
         device=device,
-        lora_r=args.lora_r,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
-        use_wandb=args.use_wandb
+        use_wandb=args.use_wandb,
+        lora_config_builder=lora_config_builder,
     )
 
     # Step 4: Train model
@@ -519,9 +366,25 @@ def main():
     print("=" * 70)
 
     best_model_path = Path(OUTPUT_DIR) / "best_model"
-    test_results = bert_model.evaluate_test_set(
+
+    tokenizer = AutoTokenizer.from_pretrained(best_model_path)
+    model = AutoModelForTokenClassification.from_pretrained(
+        best_model_path, num_labels=bert_model.num_labels
+    ).to(device)
+    model.eval()
+    print("✓ Model loaded successfully")
+    # Data collator
+    data_collator = DataCollatorForTokenClassification(
+        tokenizer=tokenizer,
+        padding=True
+    )
+    test_results = evaluate_test_set(
+        model = bert_model,
+        data_collator=data_collator,
         test_dataset=test_dataset,
-        model_path=str(best_model_path)
+        model_path=str(best_model_path),
+        use_wandb=args.use_wandb,
+        batch_size=BATCH_SIZE
     )
 
     # Final summary
