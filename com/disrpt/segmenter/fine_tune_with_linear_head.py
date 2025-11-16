@@ -333,6 +333,7 @@ def main():
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
+        task_type = TaskType.TOKEN_CLS
     )
 
 
@@ -370,8 +371,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(best_model_path)
     model = AutoModelForTokenClassification.from_pretrained(
         best_model_path, num_labels=bert_model.num_labels
-    ).to(device)
-    model.eval()
+    )
     print("✓ Model loaded successfully")
     # Data collator
     data_collator = DataCollatorForTokenClassification(
@@ -379,7 +379,7 @@ def main():
         padding=True
     )
     test_results = evaluate_test_set(
-        model = bert_model,
+        model = model,
         data_collator=data_collator,
         test_dataset=test_dataset,
         model_path=str(best_model_path),

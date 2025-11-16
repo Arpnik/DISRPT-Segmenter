@@ -171,7 +171,8 @@ class LoRAConfigBuilder:
             r: int = 16,
             lora_alpha: int = 32,
             lora_dropout: float = 0.1,
-            modules_to_save: Optional[List[str]] = None
+            modules_to_save: Optional[List[str]] = None,
+            task_type: TaskType = TaskType.FEATURE_EXTRACTION
     ) -> 'LoRAConfigBuilder':
         """
         Create LoRA config builder from comma-separated string.
@@ -199,5 +200,6 @@ class LoRAConfigBuilder:
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             target_modules=target_modules,
-            modules_to_save=modules_to_save
+            modules_to_save=modules_to_save,
+            task_type=task_type
         )

@@ -535,8 +535,6 @@ def main():
 
     # Load LoRA weights
     model = PeftModel.from_pretrained(base_model, best_model_path)
-    model = model.to(device)
-    model.eval()
 
     print("✓ Model loaded successfully")
 

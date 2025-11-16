@@ -2,9 +2,8 @@ import numpy as np
 from sklearn.metrics import precision_recall_fscore_support, accuracy_score, classification_report
 from sklearn.metrics import confusion_matrix
 from transformers import TrainingArguments, Trainer
-from wandb.apis.importers import wandb
+import wandb
 import torch
-
 
 def _get_device() -> str:
     """Automatically detect best available device."""
