@@ -14,7 +14,7 @@ import wandb
 from com.disrpt.segmenter.dataset_prep import download_dataset, load_datasets
 import warnings
 
-from com.disrpt.segmenter.utils.Helper import compute_metrics, evaluate_test_set
+from com.disrpt.segmenter.utils.Helper import compute_metrics, evaluate_test_set, _get_device
 from com.disrpt.segmenter.utils.lora_config import LoRAConfigBuilder
 from com.disrpt.segmenter.utils.wandb_config import WandbEpochMetricsCallback
 
@@ -31,7 +31,7 @@ class BERTFineTuning:
             self,
             model_name,
             num_labels=2,
-            device='cuda',
+            device=_get_device(),
             use_wandb=False,
             lora_config_builder: LoRAConfigBuilder = None,
     ):
@@ -76,16 +76,29 @@ class BERTFineTuning:
         learning_rate=3e-4,
         save_every_n_epochs=2,
         early_stopping_patience=3,
-        early_stopping_threshold=0.001
+        early_stopping_threshold=0.001,
+        resume_from_checkpoint=False
     ):
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
+
+        #Check for existing checkpoints
+        checkpoint_dir = None
+        if resume_from_checkpoint:
+            checkpoints = list(output_path.glob("checkpoint-*"))
+            if checkpoints:
+                latest_checkpoint = max(checkpoints, key=lambda p: p.stat().st_mtime)
+                checkpoint_dir = str(latest_checkpoint)
+                print(f"\n🔄 Resuming from checkpoint: {checkpoint_dir}")
+            else:
+                print("\n🆕 No checkpoints found. Starting fresh training.")
 
         print("\n" + "=" * 70)
         print("TRAINING CONFIGURATION")
         print("=" * 70)
         print(f"Model:                    {self.model_name}")
         print(f"Output directory:         {output_dir}")
+        print(f"Resume from checkpoint:   {checkpoint_dir if checkpoint_dir else 'No'}")  # ADDED
         print(f"Training examples:        {len(train_dataset)}")
         print(f"Validation examples:      {len(eval_dataset)}")
         print(f"Epochs:                   {num_epochs}")
@@ -147,15 +160,11 @@ class BERTFineTuning:
             callbacks=callbacks
         )
 
-        # Log model architecture to W&B
-        if wandb.run is not None:
-            wandb.watch(self.model, log="all", log_freq=100)
-
         print("\n" + "🚀" * 35)
         print("TRAINING STARTED")
         print("🚀" * 35 + "\n")
 
-        train_result = trainer.train()
+        train_result = trainer.train(resume_from_checkpoint=checkpoint_dir)
 
         print("\n" + "✅" * 35)
         print("TRAINING COMPLETED")
@@ -239,7 +248,8 @@ def parse_args():
     parser.add_argument("--learning_rate", type=float, default=3e-4)
     parser.add_argument("--save_every_n_epochs", type=int, default=2)
     parser.add_argument("--early_stopping_patience", type=int, default=3)
-
+    parser.add_argument("--resume_from_checkpoint", action="store_true",
+                        help="Resume training from last checkpoint if available")
 
     # W&B configuration
     parser.add_argument("--use_wandb", action="store_true",
@@ -322,8 +332,7 @@ def main():
     print("\n" + "=" * 70)
     print("STEP 3: Initialize Model")
     print("=" * 70)
-    device = 'cuda' if torch.cuda.is_available() else \
-        'mps' if torch.backends.mps.is_available() else 'cpu'
+    device = _get_device()
     print("Device for training:", device)
 
     # Create LoRA configuration builder
@@ -350,6 +359,7 @@ def main():
     print("STEP 4: Train Model")
     print("=" * 70)
 
+    # MODIFIED: Pass resume_from_checkpoint argument
     eval_results = bert_model.train_model(
         train_dataset=train_dataset,
         eval_dataset=dev_dataset,
@@ -358,7 +368,8 @@ def main():
         batch_size=BATCH_SIZE,
         learning_rate=LEARNING_RATE,
         save_every_n_epochs=args.save_every_n_epochs,
-        early_stopping_patience=args.early_stopping_patience
+        early_stopping_patience=args.early_stopping_patience,
+        resume_from_checkpoint=args.resume_from_checkpoint
     )
 
     # Step 5: Test evaluation

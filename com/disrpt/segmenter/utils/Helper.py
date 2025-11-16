@@ -18,7 +18,6 @@ def _get_device() -> str:
         print("Using CPU")
     return device
 
-@staticmethod
 def compute_metrics(pred):
     """
     Compute precision, recall, F1, and accuracy.
@@ -73,7 +72,6 @@ def compute_metrics(pred):
     return metrics
 
 
-@staticmethod
 def evaluate_test_set(test_dataset, model_path, model, data_collator, batch_size=32, use_wandb=False):
     """
     Load trained model and evaluate on test set.
@@ -113,7 +111,7 @@ def evaluate_test_set(test_dataset, model_path, model, data_collator, batch_size
 
     test_results = trainer.evaluate(test_dataset)
 
-    if use_wandb is not None:
+    if use_wandb:
         wandb.log({
             "test/loss": test_results.get("eval_loss", 0),
             "test/accuracy": test_results.get("eval_accuracy", 0),
@@ -128,7 +126,7 @@ def evaluate_test_set(test_dataset, model_path, model, data_collator, batch_size
                 print(f"{key:.<50} {value:.4f}")
 
     # Log to W&B
-    if use_wandb is not None:
+    if use_wandb:
         wandb.log({f"test_{k}": v for k, v in test_results.items()})
 
     # Get predictions for classification report
@@ -161,8 +159,7 @@ def evaluate_test_set(test_dataset, model_path, model, data_collator, batch_size
     )
     print(report)
 
-        # Log confusion matrix to W&B
-    if use_wandb is not None:
+    if use_wandb:
 
         cm = confusion_matrix(flat_labels, flat_preds)
         wandb.log({
