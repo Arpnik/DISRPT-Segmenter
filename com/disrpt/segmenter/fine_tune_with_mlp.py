@@ -17,7 +17,7 @@ import wandb
 from com.disrpt.segmenter.dataset_prep import download_dataset, load_datasets
 import warnings
 
-from com.disrpt.segmenter.utils.Helper import compute_metrics, evaluate_test_set
+from com.disrpt.segmenter.utils.Helper import compute_metrics, evaluate_test_set, _get_device
 from com.disrpt.segmenter.utils.lora_config import LoRAConfigBuilder
 from com.disrpt.segmenter.utils.wandb_config import WandbEpochMetricsCallback
 
@@ -296,10 +296,6 @@ class BERTFineTuning:
             callbacks=callbacks
         )
 
-        # Log model architecture to W&B
-        if wandb.run is not None:
-            wandb.watch(self.model, log="all", log_freq=100)
-
         print("\n" + "🚀" * 35)
         print("TRAINING STARTED")
         print("🚀" * 35 + "\n")
@@ -476,8 +472,7 @@ def main():
     print("\n" + "=" * 70)
     print("STEP 3: Initialize Model")
     print("=" * 70)
-    device = 'cuda' if torch.cuda.is_available() else \
-        'mps' if torch.backends.mps.is_available() else 'cpu'
+    device = _get_device()
     print("Device for training:", device)
 
     # Create LoRA configuration builder
