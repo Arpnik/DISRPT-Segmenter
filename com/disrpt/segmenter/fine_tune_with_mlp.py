@@ -500,7 +500,8 @@ def main():
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
-        modules_to_save=["classifier"]  # Train MLP alongside LoRA
+        modules_to_save=["classifier"], # Train MLP alongside LoRA
+        bias="all"
     )
 
     bert_model = BERTFineTuning(

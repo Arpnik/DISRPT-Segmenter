@@ -9,13 +9,13 @@ def _get_device() -> str:
     """Automatically detect best available device."""
     if torch.cuda.is_available():
         device = "cuda"
-        print(f"Using CUDA GPU: {torch.cuda.get_device_name(0)}")
+        # print(f"Using CUDA GPU: {torch.cuda.get_device_name(0)}")
     elif torch.backends.mps.is_available():
         device = "mps"
-        print("Using Apple MPS (Metal Performance Shaders)")
+        # print("Using Apple MPS (Metal Performance Shaders)")
     else:
         device = "cpu"
-        print("Using CPU")
+        # print("Using CPU")
     return device
 
 def compute_metrics(pred):

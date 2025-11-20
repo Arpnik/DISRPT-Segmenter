@@ -1,5 +1,6 @@
 import argparse
 import torch
+import transformers
 from pathlib import Path
 from transformers import (
     AutoTokenizer,
@@ -9,7 +10,7 @@ from transformers import (
     DataCollatorForTokenClassification,
     EarlyStoppingCallback
 )
-from peft import LoraConfig, get_peft_model, TaskType
+from peft import LoraConfig, get_peft_model, TaskType, AutoPeftModelForTokenClassification
 import wandb
 from com.disrpt.segmenter.dataset_prep import download_dataset, load_datasets
 import warnings
@@ -40,9 +41,6 @@ class BERTFineTuning:
             model_name: HuggingFace model identifier
             num_labels: Number of output classes (2 for EDU segmentation)
             device: Device for training
-            lora_r: LoRA rank
-            lora_alpha: LoRA alpha scaling
-            lora_dropout: LoRA dropout
         """
         self.device = device
         self.model_name = model_name
@@ -66,23 +64,23 @@ class BERTFineTuning:
         self.model.print_trainable_parameters()
 
     def train_model(
-        self,
-        train_dataset,
-        eval_dataset,
-        output_dir,
-        num_epochs=10,
-        batch_size=16,
-        eval_batch_size=32,
-        learning_rate=3e-4,
-        save_every_n_epochs=2,
-        early_stopping_patience=3,
-        early_stopping_threshold=0.001,
-        resume_from_checkpoint=False
+            self,
+            train_dataset,
+            eval_dataset,
+            output_dir,
+            num_epochs=10,
+            batch_size=16,
+            eval_batch_size=32,
+            learning_rate=3e-4,
+            save_every_n_epochs=2,
+            early_stopping_patience=3,
+            early_stopping_threshold=0.001,
+            resume_from_checkpoint=False
     ):
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        #Check for existing checkpoints
+        # Check for existing checkpoints
         checkpoint_dir = None
         if resume_from_checkpoint:
             checkpoints = list(output_path.glob("checkpoint-*"))
@@ -98,7 +96,7 @@ class BERTFineTuning:
         print("=" * 70)
         print(f"Model:                    {self.model_name}")
         print(f"Output directory:         {output_dir}")
-        print(f"Resume from checkpoint:   {checkpoint_dir if checkpoint_dir else 'No'}")  # ADDED
+        print(f"Resume from checkpoint:   {checkpoint_dir if checkpoint_dir else 'No'}")
         print(f"Training examples:        {len(train_dataset)}")
         print(f"Validation examples:      {len(eval_dataset)}")
         print(f"Epochs:                   {num_epochs}")
@@ -342,7 +340,9 @@ def main():
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
-        task_type = TaskType.TOKEN_CLS
+        task_type=TaskType.TOKEN_CLS,
+        modules_to_save=None,
+        bias="all"
     )
 
 
@@ -359,7 +359,6 @@ def main():
     print("STEP 4: Train Model")
     print("=" * 70)
 
-    # MODIFIED: Pass resume_from_checkpoint argument
     eval_results = bert_model.train_model(
         train_dataset=train_dataset,
         eval_dataset=dev_dataset,
@@ -369,7 +368,7 @@ def main():
         learning_rate=LEARNING_RATE,
         save_every_n_epochs=args.save_every_n_epochs,
         early_stopping_patience=args.early_stopping_patience,
-        resume_from_checkpoint=args.resume_from_checkpoint
+        resume_from_checkpoint=args.resume_from_checkpoint,
     )
 
     # Step 5: Test evaluation
@@ -378,19 +377,20 @@ def main():
     print("=" * 70)
 
     best_model_path = Path(OUTPUT_DIR) / "best_model"
+    transformers.logging.set_verbosity_error()
 
     tokenizer = AutoTokenizer.from_pretrained(best_model_path)
-    model = AutoModelForTokenClassification.from_pretrained(
-        best_model_path, num_labels=bert_model.num_labels
-    )
-    print("✓ Model loaded successfully")
-    # Data collator
+    model = AutoPeftModelForTokenClassification.from_pretrained(best_model_path)
+    transformers.logging.set_verbosity_warning()
+
+    print("✓ PEFT model loaded successfully")
+
     data_collator = DataCollatorForTokenClassification(
         tokenizer=tokenizer,
         padding=True
     )
     test_results = evaluate_test_set(
-        model = model,
+        model=model,
         data_collator=data_collator,
         test_dataset=test_dataset,
         model_path=str(best_model_path),
