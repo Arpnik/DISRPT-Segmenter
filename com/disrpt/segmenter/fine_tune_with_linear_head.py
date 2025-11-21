@@ -15,7 +15,8 @@ import wandb
 from com.disrpt.segmenter.dataset_prep import download_dataset, load_datasets
 import warnings
 
-from com.disrpt.segmenter.utils.Helper import compute_metrics, evaluate_test_set, _get_device
+from com.disrpt.segmenter.utils.Helper import compute_metrics, evaluate_test_set, _get_device, WeightedLossTrainer, \
+    compute_class_weights
 from com.disrpt.segmenter.utils.lora_config import LoRAConfigBuilder
 from com.disrpt.segmenter.utils.wandb_config import WandbEpochMetricsCallback
 
@@ -35,6 +36,7 @@ class BERTFineTuning:
             device=_get_device(),
             use_wandb=False,
             lora_config_builder: LoRAConfigBuilder = None,
+             class_1_weight_multiplier=0.7
     ):
         """
         Args:
@@ -46,6 +48,7 @@ class BERTFineTuning:
         self.model_name = model_name
         self.num_labels = num_labels
         self.use_wandb = use_wandb
+        self.class_1_weight_multiplier = class_1_weight_multiplier
 
         print("\n" + "=" * 70)
         print(f"Initializing {model_name} with LoRA")
@@ -129,7 +132,7 @@ class BERTFineTuning:
             save_strategy="epoch",
             save_total_limit=5,
             load_best_model_at_end=True,
-            metric_for_best_model="f1",
+            metric_for_best_model="precision",
             greater_is_better=True,
 
             fp16=torch.cuda.is_available(),
@@ -148,7 +151,15 @@ class BERTFineTuning:
         if self.use_wandb:
             callbacks.append(WandbEpochMetricsCallback())
 
-        trainer = Trainer(
+        # Calculate weights
+        class_weights = compute_class_weights(train_dataset, self.class_1_weight_multiplier)
+        print(f"\n⚖️ Class Weights Applied:")
+        print(f"   Label 0 (Continue): {class_weights[0]:.4f}")
+        print(f"   Label 1 (Start):    {class_weights[1]:.4f}")
+        print(f"   Ratio (1/0):        {class_weights[1] / class_weights[0]:.4f}x")
+
+        trainer = WeightedLossTrainer(
+            class_weights=class_weights,
             model=self.model,
             args=training_args,
             train_dataset=train_dataset,
@@ -157,7 +168,6 @@ class BERTFineTuning:
             compute_metrics=compute_metrics,
             callbacks=callbacks
         )
-
         print("\n" + "🚀" * 35)
         print("TRAINING STARTED")
         print("🚀" * 35 + "\n")
@@ -259,6 +269,9 @@ def parse_args():
     parser.add_argument("--wandb_group", type=str, default="bert-lora-linear-head",
                         help="W&B run group name")
 
+    parser.add_argument("--class_1_weight_multiplier", type=float, default=0.7,
+                        help="Multiply class 1 weight (>1 improves recall, try 0.5-1.5)")
+
     return parser.parse_args()
 
 
@@ -352,6 +365,7 @@ def main():
         device=device,
         use_wandb=args.use_wandb,
         lora_config_builder=lora_config_builder,
+        class_1_weight_multiplier=args.class_1_weight_multiplier
     )
 
     # Step 4: Train model
