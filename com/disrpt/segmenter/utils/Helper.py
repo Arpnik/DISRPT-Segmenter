@@ -1,6 +1,7 @@
 import numpy as np
 from sklearn.metrics import precision_recall_fscore_support, accuracy_score, classification_report
 from sklearn.metrics import confusion_matrix
+from sklearn.utils import compute_class_weight
 from transformers import TrainingArguments, Trainer
 import wandb
 import torch
@@ -9,13 +10,13 @@ def _get_device() -> str:
     """Automatically detect best available device."""
     if torch.cuda.is_available():
         device = "cuda"
-        print(f"Using CUDA GPU: {torch.cuda.get_device_name(0)}")
+        # print(f"Using CUDA GPU: {torch.cuda.get_device_name(0)}")
     elif torch.backends.mps.is_available():
         device = "mps"
-        print("Using Apple MPS (Metal Performance Shaders)")
+        # print("Using Apple MPS (Metal Performance Shaders)")
     else:
         device = "cpu"
-        print("Using CPU")
+        # print("Using CPU")
     return device
 
 def compute_metrics(pred):
@@ -172,3 +173,58 @@ def evaluate_test_set(test_dataset, model_path, model, data_collator, batch_size
         })
 
     return test_results
+
+
+class WeightedLossTrainer(Trainer):
+    def __init__(self, class_weights, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.class_weights = class_weights.to(self.args.device)
+
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        labels = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits = outputs.logits
+
+        # Weighted cross-entropy loss
+        loss_fct = torch.nn.CrossEntropyLoss(
+            weight=self.class_weights,
+            ignore_index=-100
+        )
+
+        loss = loss_fct(
+            logits.view(-1, self.model.config.num_labels),
+            labels.view(-1)
+        )
+
+        return (loss, outputs) if return_outputs else loss
+
+
+def compute_class_weights(train_dataset, class_1_multiplier=2.0):
+    """
+    Calculate class weights with optional amplification for class 1
+
+    Args:
+        class_1_multiplier: Multiply class 1 weight by this factor (>1 improves recall)
+    """
+    all_labels = []
+    for item in train_dataset:
+        labels = item['labels']
+        valid_labels = [l for l in labels if l != -100]
+        all_labels.extend(valid_labels)
+
+    # Compute balanced weights first
+    class_weights = compute_class_weight(
+        class_weight='balanced',
+        classes=np.array([0, 1]),
+        y=np.array(all_labels)
+    )
+
+    # Amplify class 1 weight for better recall
+    class_weights[1] *= class_1_multiplier
+
+    print(f"\n⚖️ Adjusted Class Weights (multiplier={class_1_multiplier}):")
+    print(f"   Label 0 (Continue): {class_weights[0]:.4f}")
+    print(f"   Label 1 (Start):    {class_weights[1]:.4f}")
+    print(f"   Ratio (1/0):        {class_weights[1] / class_weights[0]:.4f}x")
+
+    return torch.tensor(class_weights, dtype=torch.float32)

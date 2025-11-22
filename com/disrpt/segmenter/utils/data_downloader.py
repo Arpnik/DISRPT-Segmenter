@@ -10,7 +10,8 @@ class DatasetDownloader:
     def __init__(self, dataset_dir="dataset"):
         self.dataset_dir = Path(dataset_dir)
         self.base_url = "https://raw.githubusercontent.com/disrpt/sharedtask2025/refs/heads/master"
-        self.corpus_name = ["eng.erst.gum","eng.dep.scidtb","eng.rst.oll"]
+        self.corpus_name = ["eng.erst.gum", "eng.dep.scidtb", "eng.rst.oll", "eng.rst.sts" ,"eng.rst.umuc" ,
+                            "eng.sdrt.msdc" , "eng.sdrt.stac"]
         self.dataset_dir.mkdir(exist_ok=True)
 
     def download_file(self, file_path, local_path):

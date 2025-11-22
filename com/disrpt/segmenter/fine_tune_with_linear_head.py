@@ -1,5 +1,6 @@
 import argparse
 import torch
+import transformers
 from pathlib import Path
 from transformers import (
     AutoTokenizer,
@@ -9,12 +10,13 @@ from transformers import (
     DataCollatorForTokenClassification,
     EarlyStoppingCallback
 )
-from peft import LoraConfig, get_peft_model, TaskType
+from peft import LoraConfig, get_peft_model, TaskType, AutoPeftModelForTokenClassification
 import wandb
 from com.disrpt.segmenter.dataset_prep import download_dataset, load_datasets
 import warnings
 
-from com.disrpt.segmenter.utils.Helper import compute_metrics, evaluate_test_set, _get_device
+from com.disrpt.segmenter.utils.Helper import compute_metrics, evaluate_test_set, _get_device, WeightedLossTrainer, \
+    compute_class_weights
 from com.disrpt.segmenter.utils.lora_config import LoRAConfigBuilder
 from com.disrpt.segmenter.utils.wandb_config import WandbEpochMetricsCallback
 
@@ -34,20 +36,19 @@ class BERTFineTuning:
             device=_get_device(),
             use_wandb=False,
             lora_config_builder: LoRAConfigBuilder = None,
+             class_1_weight_multiplier=0.7
     ):
         """
         Args:
             model_name: HuggingFace model identifier
             num_labels: Number of output classes (2 for EDU segmentation)
             device: Device for training
-            lora_r: LoRA rank
-            lora_alpha: LoRA alpha scaling
-            lora_dropout: LoRA dropout
         """
         self.device = device
         self.model_name = model_name
         self.num_labels = num_labels
         self.use_wandb = use_wandb
+        self.class_1_weight_multiplier = class_1_weight_multiplier
 
         print("\n" + "=" * 70)
         print(f"Initializing {model_name} with LoRA")
@@ -66,23 +67,23 @@ class BERTFineTuning:
         self.model.print_trainable_parameters()
 
     def train_model(
-        self,
-        train_dataset,
-        eval_dataset,
-        output_dir,
-        num_epochs=10,
-        batch_size=16,
-        eval_batch_size=32,
-        learning_rate=3e-4,
-        save_every_n_epochs=2,
-        early_stopping_patience=3,
-        early_stopping_threshold=0.001,
-        resume_from_checkpoint=False
+            self,
+            train_dataset,
+            eval_dataset,
+            output_dir,
+            num_epochs=10,
+            batch_size=16,
+            eval_batch_size=32,
+            learning_rate=3e-4,
+            save_every_n_epochs=2,
+            early_stopping_patience=3,
+            early_stopping_threshold=0.001,
+            resume_from_checkpoint=False
     ):
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        #Check for existing checkpoints
+        # Check for existing checkpoints
         checkpoint_dir = None
         if resume_from_checkpoint:
             checkpoints = list(output_path.glob("checkpoint-*"))
@@ -98,7 +99,7 @@ class BERTFineTuning:
         print("=" * 70)
         print(f"Model:                    {self.model_name}")
         print(f"Output directory:         {output_dir}")
-        print(f"Resume from checkpoint:   {checkpoint_dir if checkpoint_dir else 'No'}")  # ADDED
+        print(f"Resume from checkpoint:   {checkpoint_dir if checkpoint_dir else 'No'}")
         print(f"Training examples:        {len(train_dataset)}")
         print(f"Validation examples:      {len(eval_dataset)}")
         print(f"Epochs:                   {num_epochs}")
@@ -131,7 +132,7 @@ class BERTFineTuning:
             save_strategy="epoch",
             save_total_limit=5,
             load_best_model_at_end=True,
-            metric_for_best_model="f1",
+            metric_for_best_model="precision",
             greater_is_better=True,
 
             fp16=torch.cuda.is_available(),
@@ -150,7 +151,15 @@ class BERTFineTuning:
         if self.use_wandb:
             callbacks.append(WandbEpochMetricsCallback())
 
-        trainer = Trainer(
+        # Calculate weights
+        class_weights = compute_class_weights(train_dataset, self.class_1_weight_multiplier)
+        print(f"\n⚖️ Class Weights Applied:")
+        print(f"   Label 0 (Continue): {class_weights[0]:.4f}")
+        print(f"   Label 1 (Start):    {class_weights[1]:.4f}")
+        print(f"   Ratio (1/0):        {class_weights[1] / class_weights[0]:.4f}x")
+
+        trainer = WeightedLossTrainer(
+            class_weights=class_weights,
             model=self.model,
             args=training_args,
             train_dataset=train_dataset,
@@ -159,7 +168,6 @@ class BERTFineTuning:
             compute_metrics=compute_metrics,
             callbacks=callbacks
         )
-
         print("\n" + "🚀" * 35)
         print("TRAINING STARTED")
         print("🚀" * 35 + "\n")
@@ -261,6 +269,9 @@ def parse_args():
     parser.add_argument("--wandb_group", type=str, default="bert-lora-linear-head",
                         help="W&B run group name")
 
+    parser.add_argument("--class_1_weight_multiplier", type=float, default=0.7,
+                        help="Multiply class 1 weight (>1 improves recall, try 0.5-1.5)")
+
     return parser.parse_args()
 
 
@@ -342,7 +353,9 @@ def main():
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
-        task_type = TaskType.TOKEN_CLS
+        task_type=TaskType.TOKEN_CLS,
+        modules_to_save=None,
+        bias="all"
     )
 
 
@@ -352,6 +365,7 @@ def main():
         device=device,
         use_wandb=args.use_wandb,
         lora_config_builder=lora_config_builder,
+        class_1_weight_multiplier=args.class_1_weight_multiplier
     )
 
     # Step 4: Train model
@@ -359,7 +373,6 @@ def main():
     print("STEP 4: Train Model")
     print("=" * 70)
 
-    # MODIFIED: Pass resume_from_checkpoint argument
     eval_results = bert_model.train_model(
         train_dataset=train_dataset,
         eval_dataset=dev_dataset,
@@ -369,7 +382,7 @@ def main():
         learning_rate=LEARNING_RATE,
         save_every_n_epochs=args.save_every_n_epochs,
         early_stopping_patience=args.early_stopping_patience,
-        resume_from_checkpoint=args.resume_from_checkpoint
+        resume_from_checkpoint=args.resume_from_checkpoint,
     )
 
     # Step 5: Test evaluation
@@ -378,19 +391,20 @@ def main():
     print("=" * 70)
 
     best_model_path = Path(OUTPUT_DIR) / "best_model"
+    transformers.logging.set_verbosity_error()
 
     tokenizer = AutoTokenizer.from_pretrained(best_model_path)
-    model = AutoModelForTokenClassification.from_pretrained(
-        best_model_path, num_labels=bert_model.num_labels
-    )
-    print("✓ Model loaded successfully")
-    # Data collator
+    model = AutoPeftModelForTokenClassification.from_pretrained(best_model_path)
+    transformers.logging.set_verbosity_warning()
+
+    print("✓ PEFT model loaded successfully")
+
     data_collator = DataCollatorForTokenClassification(
         tokenizer=tokenizer,
         padding=True
     )
     test_results = evaluate_test_set(
-        model = model,
+        model=model,
         data_collator=data_collator,
         test_dataset=test_dataset,
         model_path=str(best_model_path),
