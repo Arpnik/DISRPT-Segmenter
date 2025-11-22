@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from pathlib import Path
+import json
 
 import transformers
 from transformers import (
@@ -368,6 +369,14 @@ class BERTFineTuning:
 
         trainer.save_model(str(final_model_dir))
         tokenizer.save_pretrained(str(final_model_dir))
+
+        model_config = {
+            "model_type": "mlp_classifier",  # Identifier for MLP model
+            "mlp_hidden_dims": args.mlp_dims,
+            "mlp_dropout": args.mlp_dropout
+        }
+        with open(final_model_dir / "chunker_config.json", 'w') as f:
+            json.dump(model_config, f, indent=2)
 
         # Save model artifact to W&B
         if wandb.run is not None:
