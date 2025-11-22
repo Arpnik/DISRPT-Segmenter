@@ -165,15 +165,14 @@ class BERTFineTuning:
             device: Device for training
             mlp_hidden_dims: Hidden layer dimensions for MLP
             mlp_dropout: Dropout rate in MLP
-            lora_r: LoRA rank
-            lora_alpha: LoRA alpha scaling
-            lora_dropout: LoRA dropout
         """
         self.device = device
         self.model_name = model_name
         self.num_labels = num_labels
         self.use_wandb = use_wandb
         self.class_1_weight_multiplier = class_1_weight_multiplier
+        self.mlp_hidden_dims = mlp_hidden_dims
+        self.mlp_dropout = mlp_dropout
 
 
         print("\n" + "=" * 70)
@@ -372,8 +371,8 @@ class BERTFineTuning:
 
         model_config = {
             "model_type": "mlp_classifier",  # Identifier for MLP model
-            "mlp_hidden_dims": args.mlp_dims,
-            "mlp_dropout": args.mlp_dropout
+            "mlp_hidden_dims": self.mlp_hidden_dims,
+            "mlp_dropout": self.mlp_dropout
         }
         with open(final_model_dir / "chunker_config.json", 'w') as f:
             json.dump(model_config, f, indent=2)
