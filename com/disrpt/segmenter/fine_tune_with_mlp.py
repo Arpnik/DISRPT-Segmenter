@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 from pathlib import Path
+
+import transformers
 from transformers import (
     AutoTokenizer,
     AutoModel,
@@ -12,12 +14,15 @@ from transformers import (
     DataCollatorForTokenClassification,
     EarlyStoppingCallback
 )
-from peft import get_peft_model, PeftModel
+from peft import get_peft_model, PeftModel, AutoPeftModelForTokenClassification
 import wandb
+from transformers.modeling_outputs import TokenClassifierOutput
+
 from com.disrpt.segmenter.dataset_prep import download_dataset, load_datasets
 import warnings
 
-from com.disrpt.segmenter.utils.Helper import compute_metrics, evaluate_test_set, _get_device
+from com.disrpt.segmenter.utils.Helper import compute_metrics, evaluate_test_set, _get_device, compute_class_weights, \
+    WeightedLossTrainer
 from com.disrpt.segmenter.utils.lora_config import LoRAConfigBuilder
 from com.disrpt.segmenter.utils.wandb_config import WandbEpochMetricsCallback
 
@@ -124,10 +129,12 @@ class BERTWithMLPClassifier(nn.Module):
                 labels.view(-1)
             )
 
-        return {
-            'loss': loss,
-            'logits': logits
-        }
+        return TokenClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=None,
+            attentions=None
+        )
 
 
 # ============================================================================
@@ -148,6 +155,7 @@ class BERTFineTuning:
             mlp_hidden_dims=[256, 128],
             mlp_dropout=0.3,
             lora_config_builder: LoRAConfigBuilder = None,
+            class_1_weight_multiplier=0.7,
             use_wandb=False):
         """
         Args:
@@ -164,6 +172,8 @@ class BERTFineTuning:
         self.model_name = model_name
         self.num_labels = num_labels
         self.use_wandb = use_wandb
+        self.class_1_weight_multiplier = class_1_weight_multiplier
+
 
         print("\n" + "=" * 70)
         print(f"Initializing {model_name} with LoRA + MLP Classifier")
@@ -299,7 +309,15 @@ class BERTFineTuning:
         if self.use_wandb:
             callbacks.append(WandbEpochMetricsCallback())
 
-        trainer = Trainer(
+        # Calculate weights
+        class_weights = compute_class_weights(train_dataset, self.class_1_weight_multiplier)
+        print(f"\n⚖️ Class Weights Applied:")
+        print(f"   Label 0 (Continue): {class_weights[0]:.4f}")
+        print(f"   Label 1 (Start):    {class_weights[1]:.4f}")
+        print(f"   Ratio (1/0):        {class_weights[1] / class_weights[0]:.4f}x")
+
+        trainer = WeightedLossTrainer(
+            class_weights=class_weights,
             model=self.model,
             args=training_args,
             train_dataset=train_dataset,
@@ -308,7 +326,6 @@ class BERTFineTuning:
             compute_metrics=compute_metrics,
             callbacks=callbacks
         )
-
         print("\n" + "🚀" * 35)
         print("TRAINING STARTED")
         print("🚀" * 35 + "\n")
@@ -417,6 +434,9 @@ def parse_args():
     parser.add_argument("--wandb_group", type=str, default="",
                         help="W&B run group")
 
+    parser.add_argument("--class_1_weight_multiplier", type=float, default=0.7,
+                        help="Multiply class 1 weight (>1 improves recall, try 0.5-1.5)")
+
     return parser.parse_args()
 
 
@@ -512,6 +532,8 @@ def main():
         mlp_dropout=args.mlp_dropout,
         use_wandb=args.use_wandb,
         lora_config_builder=lora_config_builder,
+        class_1_weight_multiplier=args.class_1_weight_multiplier
+
     )
 
     # Step 4: Train model
@@ -538,19 +560,11 @@ def main():
     print("=" * 70)
 
     best_model_path = Path(OUTPUT_DIR) / "best_model"
-    # Load tokenizer
+    transformers.logging.set_verbosity_error()
+
     tokenizer = AutoTokenizer.from_pretrained(best_model_path)
-
-    # Load model architecture
-    base_model = BERTWithMLPClassifier(
-        model_name=MODEL_NAME,
-        num_labels=2,
-        mlp_hidden_dims=args.mlp_dims,
-        mlp_dropout=args.mlp_dropout
-    )
-
-    # Load LoRA weights
-    model = PeftModel.from_pretrained(base_model, best_model_path)
+    model = AutoPeftModelForTokenClassification.from_pretrained(best_model_path)
+    transformers.logging.set_verbosity_warning()
 
     print("✓ Model loaded successfully")
 
