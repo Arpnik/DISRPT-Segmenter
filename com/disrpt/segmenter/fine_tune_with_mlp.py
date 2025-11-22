@@ -563,7 +563,19 @@ def main():
     transformers.logging.set_verbosity_error()
 
     tokenizer = AutoTokenizer.from_pretrained(best_model_path)
-    model = AutoPeftModelForTokenClassification.from_pretrained(best_model_path)
+
+    # Load the base model architecture
+    base_model = BERTWithMLPClassifier(
+        model_name=MODEL_NAME,
+        num_labels=2,
+        mlp_hidden_dims=args.mlp_dims,
+        mlp_dropout=args.mlp_dropout
+    )
+
+    # Load PEFT model (this loads LoRA + modules_to_save like classifier)
+    model = PeftModel.from_pretrained(base_model, best_model_path)
+    model = model.to(device)
+    model.eval()
     transformers.logging.set_verbosity_warning()
 
     print("✓ Model loaded successfully")
