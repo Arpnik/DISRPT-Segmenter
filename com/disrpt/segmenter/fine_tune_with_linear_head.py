@@ -14,6 +14,7 @@ from peft import LoraConfig, get_peft_model, TaskType, AutoPeftModelForTokenClas
 import wandb
 from com.disrpt.segmenter.dataset_prep import download_dataset, load_datasets
 import warnings
+import json
 
 from com.disrpt.segmenter.utils.Helper import compute_metrics, evaluate_test_set, _get_device, WeightedLossTrainer, \
     compute_class_weights
@@ -209,6 +210,11 @@ class BERTFineTuning:
 
         trainer.save_model(str(final_model_dir))
         tokenizer.save_pretrained(str(final_model_dir))
+        model_config = {
+            "model_type": "linear_head"  # Identifier for linear model
+        }
+        with open(final_model_dir / "chunker_config.json", 'w') as f:
+            json.dump(model_config, f, indent=2)
 
         # Save model artifact to W&B
         if wandb.run is not None:
