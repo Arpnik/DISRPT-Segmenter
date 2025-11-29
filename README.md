@@ -81,6 +81,8 @@ There are 2 segmenters defined which use a transformer model (DistilBERT or BERT
 
 #### **Model Architecture Comparison**
 
+![bert-architecture-diagram](./images/BERT.jpg)
+
 | Feature | fine_tune_with_linear_head.py | fine_tune_with_mlp.py |
 |---------|-------------------------------|----------------|
 | Base Model | DistilBERT/BERT               | DistilBERT/BERT |
